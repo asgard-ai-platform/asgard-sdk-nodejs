@@ -66,17 +66,41 @@ describe('BotProviderStreamer', () => {
       ]);
     });
 
-    it('stops after terminal error event', async () => {
-      const errorEvent = makeEvent({ eventType: 'asgard.run.error' });
-      const stream = makeStream([sseChunk(errorEvent)]);
+    it('asgard.run.error is NOT delivered — sets err() instead (mirrors Go SDK)', async () => {
+      // Go SDK: Next() for run.error sets s.err and returns false without exposing the event.
+      const init = makeEvent({ eventType: 'asgard.run.init', eventId: 'e1' });
+      const errorEvent = makeEvent({
+        eventType: 'asgard.run.error',
+        fact: { runError: { error: { message: 'something went wrong', code: 'E1', inner: '', location: {} as any } } } as any,
+      });
+      const stream = makeStream([sseChunk(init), sseChunk(errorEvent)]);
 
       const events: GenericBotSseEvent[] = [];
-      for await (const event of new BotProviderStreamer(stream)) {
-        events.push(event);
+      const streamer = new BotProviderStreamer(stream);
+      while (await streamer.next()) {
+        events.push(streamer.current()!);
       }
 
+      // Only init is delivered; run.error is suppressed
       expect(events).toHaveLength(1);
-      expect(events[0].eventType).toBe('asgard.run.error');
+      expect(events[0].eventType).toBe('asgard.run.init');
+      // err() carries the error detail
+      expect(streamer.err()).toBeInstanceOf(AsgardError);
+      expect(streamer.err()?.message).toBe('something went wrong');
+    });
+
+    it('asgard.run.error from iterator throws AsgardError', async () => {
+      const errorEvent = makeEvent({
+        eventType: 'asgard.run.error',
+        fact: { runError: { error: { message: 'stream failed', code: 'E2', inner: '', location: {} as any } } } as any,
+      });
+      const stream = makeStream([sseChunk(errorEvent)]);
+
+      await expect(async () => {
+        for await (const _ of new BotProviderStreamer(stream)) {
+          // no events expected
+        }
+      }).rejects.toBeInstanceOf(AsgardError);
     });
 
     it('throws AsgardError from iterator when SSE parse fails', async () => {
@@ -135,6 +159,16 @@ describe('BotProviderStreamer', () => {
       // Split in the middle of the JSON
       const mid = Math.floor(raw.length / 2);
       const stream = makeStream([raw.slice(0, mid), raw.slice(mid)]);
+
+      const streamer = new BotProviderStreamer(stream);
+      expect(await streamer.next()).toBe(true);
+      expect(streamer.current()?.eventType).toBe('asgard.run.init');
+    });
+
+    it('handles CRLF line endings (\\r\\n\\r\\n delimiter)', async () => {
+      const event = makeEvent({ eventType: 'asgard.run.init' });
+      const crlfChunk = `data: ${JSON.stringify(event)}\r\n\r\n`;
+      const stream = makeStream([crlfChunk]);
 
       const streamer = new BotProviderStreamer(stream);
       expect(await streamer.next()).toBe(true);

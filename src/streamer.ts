@@ -1,10 +1,5 @@
 import { AsgardError } from './error.js';
-import { GenericBotSseEvent, SseEventType } from './models.js';
-
-const SSE_DONE_EVENTS: SseEventType[] = [
-  'asgard.run.done',
-  'asgard.run.error',
-];
+import { GenericBotSseEvent } from './models.js';
 
 /**
  * BotProviderStreamer wraps an established SSE response body and provides
@@ -12,12 +7,19 @@ const SSE_DONE_EVENTS: SseEventType[] = [
  *
  * Obtain an instance from BotProviderClient.newStreamer() — do not construct directly.
  *
+ * Lifecycle:
+ *   - Stream ends normally when server sends `asgard.run.done` (delivered to caller).
+ *   - Stream ends with error when server sends `asgard.run.error` (NOT delivered;
+ *     use err() to retrieve the error detail — mirrors Go SDK behaviour).
+ *   - Call close() to abort early and release the TCP connection.
+ *
  * Pull-based usage:
  *   while (await streamer.next()) { process(streamer.current()!); }
  *   if (streamer.err()) throw streamer.err();
  *
  * Async-iterator usage:
  *   for await (const event of streamer) { process(event); }
+ *   // throws AsgardError if stream ended with asgard.run.error
  */
 export class BotProviderStreamer implements AsyncIterable<GenericBotSseEvent> {
   private readonly _reader: ReadableStreamDefaultReader<Uint8Array>;
@@ -47,6 +49,10 @@ export class BotProviderStreamer implements AsyncIterable<GenericBotSseEvent> {
     });
   }
 
+  private _cancelReader(): void {
+    void this._reader.cancel().catch(() => {});
+  }
+
   private _readLoop(): void {
     const decoder = new TextDecoder();
     let buf = '';
@@ -58,11 +64,12 @@ export class BotProviderStreamer implements AsyncIterable<GenericBotSseEvent> {
           if (done) break;
           buf += decoder.decode(value, { stream: true });
 
-          const blocks = buf.split(/\n\n/);
+          // SSE blocks are delimited by double newline (\n\n or \r\n\r\n)
+          const blocks = buf.split(/\r?\n\r?\n/);
           buf = blocks.pop() ?? '';
 
           for (const block of blocks) {
-            const dataLine = block.split('\n').find((l) => l.startsWith('data:'));
+            const dataLine = block.split(/\r?\n/).find((l) => l.startsWith('data:'));
             if (!dataLine) continue;
             const raw = dataLine.slice(5).trim();
             if (!raw || raw === '[DONE]') continue;
@@ -95,22 +102,43 @@ export class BotProviderStreamer implements AsyncIterable<GenericBotSseEvent> {
    * Advance to the next event.
    * Returns true if an event is available (read it with current()).
    * Returns false when the stream ends normally or with an error (read it with err()).
+   *
+   * Note: `asgard.run.error` is NOT delivered as an event. next() returns false
+   * and err() contains the error detail (mirrors Go SDK behaviour).
    */
   async next(): Promise<boolean> {
     while (true) {
       if (this._queue.length > 0) {
         const item = this._queue.shift()!;
+
         if (item instanceof AsgardError) {
           this._error = item;
-          return false;
-        }
-        this._current = item;
-        // After delivering a terminal event, mark done and discard any
-        // trailing events that may have been enqueued before the server closed.
-        if (SSE_DONE_EVENTS.includes(item.eventType)) {
           this._done = true;
           this._queue = [];
+          this._cancelReader();
+          return false;
         }
+
+        // asgard.run.error: NOT delivered to caller (mirrors Go SDK).
+        // Go: Next() sets s.err and returns false without exposing the event.
+        if (item.eventType === 'asgard.run.error') {
+          const detail = item.fact?.runError?.error;
+          this._error = new AsgardError(detail?.message ?? 'SSE stream error');
+          this._done = true;
+          this._queue = [];
+          this._cancelReader();
+          return false;
+        }
+
+        this._current = item;
+
+        // asgard.run.done: deliver to caller, then stop and release connection.
+        if (item.eventType === 'asgard.run.done') {
+          this._done = true;
+          this._queue = [];
+          this._cancelReader();
+        }
+
         return true;
       }
       if (this._done) return false;
@@ -128,12 +156,16 @@ export class BotProviderStreamer implements AsyncIterable<GenericBotSseEvent> {
     return this._error;
   }
 
-  /** Cancel the underlying reader, releasing the TCP connection. */
+  /**
+   * Cancel the underlying reader and release the TCP connection.
+   * Safe to call multiple times.
+   */
   close(): void {
     this._done = true; // set before cancel so _readLoop catch doesn't enqueue an error
+    this._queue = [];
     this._notify?.();
     this._notify = null;
-    void this._reader.cancel().catch(() => {});
+    this._cancelReader();
   }
 
   async *[Symbol.asyncIterator](): AsyncGenerator<GenericBotSseEvent> {

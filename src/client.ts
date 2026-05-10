@@ -121,6 +121,9 @@ export class BotProviderClient {
   /**
    * Establish an SSE connection and return a BotProviderStreamer.
    * Throws AsgardError if the connection cannot be established (non-2xx response).
+   *
+   * No request timeout is applied — SSE connections are long-lived by design.
+   * Use BotProviderStreamer.close() to abort the stream when done.
    */
   async newStreamer(
     message: GenericBotMessage,
@@ -137,9 +140,12 @@ export class BotProviderClient {
         'Content-Type': 'application/json',
       }),
       body: JSON.stringify(message),
-      signal: AbortSignal.timeout(this.timeoutMs),
+      // No AbortSignal: SSE is indefinite. AbortSignal.timeout() would abort
+      // the body read after timeoutMs, killing a healthy long-running stream.
     });
     if (!resp.ok) {
+      // Consume and discard the body to release the underlying connection.
+      await resp.body?.cancel();
       throw new AsgardError(
         `SSE connection failed (HTTP ${resp.status})`,
         resp.status,

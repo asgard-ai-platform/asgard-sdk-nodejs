@@ -181,6 +181,16 @@ describe('BotProviderClient', () => {
       expect(streamer).toBeInstanceOf(BotProviderStreamer);
     });
 
+    it('does not apply AbortSignal to SSE fetch (long-lived connection)', async () => {
+      const body = new ReadableStream<Uint8Array>({ start(c) { c.close(); } });
+      fetchSpy.mockResolvedValue(new Response(body, { status: 200 }));
+
+      await client.newStreamer(testMessage);
+
+      const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      expect(init.signal).toBeUndefined();
+    });
+
     it('throws AsgardError when server returns non-2xx', async () => {
       fetchSpy.mockResolvedValue(new Response('Unauthorized', { status: 401 }));
 
