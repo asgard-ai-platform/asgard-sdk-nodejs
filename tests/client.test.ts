@@ -1,9 +1,9 @@
 import { Readable } from 'stream';
-import { BotProviderClient } from './client.js';
-import { BotProviderConfig } from './config.js';
-import { AsgardError } from './error.js';
-import { GenericBotMessage, GenericBotReply } from './models.js';
-import { BotProviderStreamer } from './streamer.js';
+import { BotProviderClient } from '../src/client.js';
+import { BotProviderConfig } from '../src/config.js';
+import { AsgardError } from '../src/error.js';
+import { GenericBotMessage, GenericBotReply } from '../src/models.js';
+import { BotProviderStreamer } from '../src/streamer.js';
 
 const config: BotProviderConfig = {
   edgeServerHost: 'https://edge.example.com',

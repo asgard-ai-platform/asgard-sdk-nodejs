@@ -1,6 +1,6 @@
-import { AsgardError } from './error.js';
-import { GenericBotSseEvent } from './models.js';
-import { BotProviderStreamer } from './streamer.js';
+import { AsgardError } from '../src/error.js';
+import { GenericBotSseEvent } from '../src/models.js';
+import { BotProviderStreamer } from '../src/streamer.js';
 
 const encoder = new TextEncoder();
 

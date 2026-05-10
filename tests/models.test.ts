@@ -5,7 +5,7 @@ import {
   PostBackAction,
   SseEventType,
   ToolCallConsentResult,
-} from './models.js';
+} from '../src/models.js';
 
 describe('Enum string values (must match Go sdk json tags)', () => {
   it('SseEventType — 12 values, all prefixed asgard.*', () => {
