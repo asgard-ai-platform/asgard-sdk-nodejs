@@ -1,5 +1,5 @@
-import { Readable } from 'stream';
 import FormData from 'form-data';
+import { Readable, Writable } from 'stream';
 import { BotProviderConfig, MessageRequestOptions } from './config.js';
 import { AsgardError } from './error.js';
 import {
@@ -32,9 +32,9 @@ function buildHeaders(
   extra?: Record<string, string>,
 ): Record<string, string> {
   const headers: Record<string, string> = {
-    'X-API-KEY': config.botProviderApiKey,
-    ...config.headers,
-    ...extra,
+    ...config.headers,                        // user-supplied custom headers (lowest priority)
+    'X-API-KEY': config.botProviderApiKey,    // always required, cannot be overridden
+    ...extra,                                 // per-request headers (Content-Type etc.)
   };
   if (opts?.userIdentityHint) {
     headers['X-ASGARD-USER-IDENTITY-HINT'] = opts.userIdentityHint;
@@ -60,6 +60,29 @@ async function parseApiResponse<T>(resp: Response): Promise<T> {
     );
   }
   return body.data;
+}
+
+/**
+ * Buffer an entire form-data Readable stream into a single Buffer.
+ * form-data extends CombinedStream (old-style stream) which only starts
+ * flowing when pipe() is called — pipe() internally calls resume().
+ */
+function bufferFormData(form: FormData): Promise<Buffer> {
+  return new Promise<Buffer>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const writer = new Writable({
+      write(chunk: Buffer, _, cb) {
+        chunks.push(chunk);
+        cb();
+      },
+      final(cb) {
+        resolve(Buffer.concat(chunks));
+        cb();
+      },
+    });
+    writer.on('error', reject);
+    form.pipe(writer);
+  });
 }
 
 export class BotProviderClient {
@@ -95,19 +118,37 @@ export class BotProviderClient {
     return parseApiResponse<GenericBotReply>(resp);
   }
 
-  newStreamer(
+  /**
+   * Establish an SSE connection and return a BotProviderStreamer.
+   * Throws AsgardError if the connection cannot be established (non-2xx response).
+   */
+  async newStreamer(
     message: GenericBotMessage,
     opts?: MessageRequestOptions,
-  ): BotProviderStreamer {
+  ): Promise<BotProviderStreamer> {
     const url = buildUrl(
       this.config.edgeServerHost,
       `${this.basePath()}/message/sse`,
       opts,
     );
-    const headers = buildHeaders(this.config, opts, {
-      'Content-Type': 'application/json',
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: buildHeaders(this.config, opts, {
+        'Content-Type': 'application/json',
+      }),
+      body: JSON.stringify(message),
+      signal: AbortSignal.timeout(this.timeoutMs),
     });
-    return new BotProviderStreamer(url, headers, message, this.timeoutMs);
+    if (!resp.ok) {
+      throw new AsgardError(
+        `SSE connection failed (HTTP ${resp.status})`,
+        resp.status,
+      );
+    }
+    if (!resp.body) {
+      throw new AsgardError('SSE response has no body', resp.status);
+    }
+    return new BotProviderStreamer(resp.body);
   }
 
   async triggerJson(payload: Record<string, unknown>): Promise<unknown> {
@@ -136,13 +177,11 @@ export class BotProviderClient {
         contentType: file.mime ?? 'application/octet-stream',
       });
     }
+    const body = await bufferFormData(form);
     const resp = await fetch(url, {
       method: 'POST',
-      headers: {
-        ...buildHeaders(this.config),
-        ...form.getHeaders(),
-      },
-      body: Readable.toWeb(form) as ReadableStream,
+      headers: buildHeaders(this.config, undefined, form.getHeaders()),
+      body,
       signal: AbortSignal.timeout(this.timeoutMs),
     });
     return parseApiResponse<unknown>(resp);
@@ -159,18 +198,19 @@ export class BotProviderClient {
       filename: file.filename,
       contentType: file.mime ?? 'application/octet-stream',
     });
+    const body = await bufferFormData(form);
     const resp = await fetch(url, {
       method: 'POST',
-      headers: {
-        ...buildHeaders(this.config),
-        ...form.getHeaders(),
-      },
-      body: Readable.toWeb(form) as ReadableStream,
+      headers: buildHeaders(this.config, undefined, form.getHeaders()),
+      body,
       signal: AbortSignal.timeout(this.timeoutMs),
     });
     const blobs = await parseApiResponse<Blob[]>(resp);
     if (!blobs || blobs.length === 0) {
-      throw new AsgardError('Upload blob succeeded but no blob metadata returned', 200);
+      throw new AsgardError(
+        'Upload blob succeeded but no blob metadata returned',
+        200,
+      );
     }
     return blobs[0];
   }

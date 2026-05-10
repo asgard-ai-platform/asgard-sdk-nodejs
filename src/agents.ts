@@ -18,7 +18,7 @@ export interface BotAgent {
   newStreamer(
     message: GenericBotMessage,
     opts?: MessageRequestOptions,
-  ): BotProviderStreamer;
+  ): Promise<BotProviderStreamer>;
   uploadBlob(
     channelId: string,
     file: { stream: Readable; filename: string; mime?: string },
