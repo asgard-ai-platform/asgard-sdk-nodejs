@@ -1,204 +1,407 @@
 # asgard-sdk-nodejs
 
-Asgard Edge Server BotProvider API 的 Node.js / TypeScript SDK。
+Asgard EdgeServer 的 Node.js / TypeScript SDK。
 
-## 系統需求
+> English version: [README.md](README.md)
 
-- Node.js 18+
-- npm 8+
+## 目錄
+
+- [安裝](#安裝)
+- [BotProviderClient](#botproviderclient)
+- [Streaming (SSE)](#streaming-sse)
+- [SendMessage (REST)](#sendmessage-rest)
+- [UploadBlob](#uploadblob)
+- [TriggerJSON](#triggerjson)
+- [TriggerForm](#triggerform)
+- [Sandbox 操作](#sandbox-操作)
+  - [generateSandboxEditorOpenUrl](#generatesandboxeditoropenurl)
+  - [sandboxFsList](#sandboxfslist)
+  - [sandboxFsRead](#sandboxfsread)
+  - [sandboxFsWrite](#sandboxfswrite)
+  - [sandboxHeartbeat](#sandboxheartbeat)
+- [SourceSetClient](#sourcesetclient)
+  - [listDirectory](#listdirectory)
+  - [stat](#stat)
+  - [readFile](#readfile)
+  - [writeFile](#writefile)
+  - [makeDirectory](#makedirectory)
+  - [remove / removeAll](#remove--removeall)
+- [自訂 headers 與 timeout](#自訂-headers-與-timeout)
+- [錯誤處理](#錯誤處理)
+- [授權](#授權)
 
 ## 安裝
 
-### 從 GitHub Packages 引用
-
-在專案的 `.npmrc` 中新增 GitHub Packages registry：
-
-```
-@asgard-ai-platform:registry=https://npm.pkg.github.com
-//npm.pkg.github.com/:_authToken=你的_GITHUB_TOKEN
-```
-
-然後安裝：
+需要 Node.js 18+（使用內建的 `fetch` 與 `AbortSignal.timeout`）。
 
 ```bash
-npm install @asgard-ai-platform/asgard-sdk-nodejs
+npm install @asgard-js/nodejs
 ```
 
-認證需要具備 `read:packages` 權限的 GitHub Personal Access Token。
+## BotProviderClient
 
-### 本機建置
-
-```bash
-git clone https://github.com/asgard-ai-platform/asgard-sdk-nodejs.git
-cd asgard-sdk-nodejs
-npm install
-npm run build
-```
-
-## 快速開始
-
-### 發送訊息（同步等待回覆）
+`BotProviderClient` 是所有 bot-provider API 的唯一入口：streaming、訊息、blob 上傳、function trigger、sandbox 操作都在這裡。
 
 ```typescript
-import { AsgardSdk, BotProviderConfig, GenericBotMessage } from '@asgard-ai-platform/asgard-sdk-nodejs';
+import { BotProviderClient } from '@asgard-js/nodejs';
 
-const config: BotProviderConfig = {
-  edgeServerHost: 'https://edge.example.com',
-  namespace: 'my-namespace',
+const client = new BotProviderClient({
+  edgeServerHost: 'https://api.asgard-ai.com',
+  namespace: 'default',         // namespace
+  botProviderName: 'my-bot',    // bot provider 名稱
+  botProviderApiKey: 'your-api-key',
+});
+```
+
+## Streaming (SSE)
+
+最常見的用法 — 以事件流的方式逐筆接收 bot 回覆：
+
+```typescript
+import {
+  BotProviderClient,
+  GenericBotMessage,
+  PostBackActionNone,
+  SseEventTypeMessageComplete,
+  SseEventTypeMessageDelta,
+  SseEventTypeRunError,
+} from '@asgard-js/nodejs';
+
+const client = new BotProviderClient({
+  edgeServerHost: 'https://api.asgard-ai.com',
+  namespace: 'default',
   botProviderName: 'my-bot',
   botProviderApiKey: 'your-api-key',
-};
-
-const client = AsgardSdk.newClient(config);
+});
 
 const message: GenericBotMessage = {
-  customChannelId: 'channel-001',
-  text: '你好！',
+  customChannelId: 'channel-1',
+  customMessageId: 'msg-1',
+  text: 'Hello',
+  action: PostBackActionNone,
 };
 
-const reply = await client.sendMessage(message, null);
-reply.messages?.forEach(m => console.log(m.text));
-```
-
-### SSE 串流接收事件
-
-```typescript
-const streamer = await client.newStreamer(message, null);
+const streamer = await client.newStreamer(message);
 try {
-  // 方式一：async iterator（推薦）
   for await (const event of streamer) {
-    console.log(event.eventType, event.fact);
+    switch (event.eventType) {
+      case SseEventTypeMessageDelta:
+        if (event.fact.messageDelta) {
+          process.stdout.write(event.fact.messageDelta.message.text);
+        }
+        break;
+      case SseEventTypeMessageComplete:
+        process.stdout.write('\n');
+        break;
+      case SseEventTypeRunError:
+        if (event.fact.runError) {
+          console.error('run error:', event.fact.runError.error.message);
+        }
+        break;
+    }
   }
-
-  // 方式二：pull-based API
-  while (streamer.next()) {
-    const event = streamer.current();
-    console.log(event?.eventType, event?.fact);
-  }
-  if (streamer.err()) throw streamer.err();
 } finally {
   await streamer.close();
 }
 ```
 
-### 使用 BotAgent（高階介面）
+每個 enum 風格的型別（`SseEventType`、`PostBackAction`、`FileType`、`ToolCallConsentResult`、`MessageTemplateType`、`MessageTemplateActionType`）都有對應的 `SseEventType*` / `PostBackAction*` 等常數一起匯出 — 建議優先使用常數而非 inline 字串。
+
+Streamer 也提供 pull-based 介面（`next()` / `current()` / `err()`），若不想用 `for await` 可改用這套。
+
+## SendMessage (REST)
+
+同步呼叫 — 等待完整回覆：
 
 ```typescript
-import { AsgardSdk } from '@asgard-ai-platform/asgard-sdk-nodejs';
-
-const agent = AsgardSdk.newBotAgent(
-  'https://edge.example.com',
-  'my-namespace',
-  'my-bot',
-  'your-api-key',
-);
-
-const reply = await agent.sendMessage(message, null);
+const reply = await client.sendMessage(message);
+for (const m of reply.messages) {
+  console.log(m.text);
+}
 ```
 
-### 使用 FunctionAgent
+透過 `MessageRequestOptions` 開啟 debug 模式或附帶 user identity hint：
 
 ```typescript
-const fn = AsgardSdk.newFunctionAgent(
-  'https://edge.example.com',
-  'my-namespace',
-  'my-function',
-  'your-api-key',
-);
-
-const result = await fn.triggerJson({ key: 'value' });
-```
-
-### 上傳 Blob
-
-```typescript
-import { createReadStream } from 'fs';
-
-const stream = createReadStream('photo.jpg');
-const blob = await client.uploadBlob('channel-001', stream, 'photo.jpg', 'image/jpeg');
-console.log('已上傳：', blob.blobId);
-```
-
-### 表單觸發（含檔案）
-
-```typescript
-const stream = createReadStream('data.csv');
-const result = await client.triggerForm(
-  { mode: 'csv' },
-  stream,
-  'data.csv',
-  'text/csv',
-);
-```
-
-## 設定
-
-| 欄位 | 必填 | 說明 |
-|------|------|------|
-| `edgeServerHost` | ✓ | Edge Server 基礎 URL（結尾不含 `/`） |
-| `namespace` | ✓ | Namespace 識別碼 |
-| `botProviderName` | ✓ | Bot Provider 名稱 |
-| `botProviderApiKey` | ✓ | API 金鑰（作為 `X-API-KEY` 標頭傳送，不可被 `headers` 覆蓋） |
-| `fetchClient` | — | 自訂 fetch 函式；預設使用 Node.js 18+ 內建 `fetch` |
-| `headers` | — | 額外請求標頭 |
-
-### 每次請求選項
-
-```typescript
-import { MessageRequestOptions } from '@asgard-ai-platform/asgard-sdk-nodejs';
+import { MessageRequestOptions } from '@asgard-js/nodejs';
 
 const opts: MessageRequestOptions = {
-  isDebug: true,                        // 加入 ?is_debug=true
-  userIdentityHint: 'user@example.com', // X-ASGARD-USER-IDENTITY-HINT（最多 128 字元）
+  isDebug: true,
+  userIdentityHint: 'user-123',  // 轉發為 X-ASGARD-USER-IDENTITY-HINT（最長 128 字）
 };
-
 const reply = await client.sendMessage(message, opts);
 ```
 
-## 錯誤處理
+## UploadBlob
 
-所有 Client 方法在失敗時拋出 `AsgardError`：
+上傳檔案後，可在後續訊息以 `blobIds` 引用：
 
 ```typescript
-import { AsgardError } from '@asgard-ai-platform/asgard-sdk-nodejs';
+import { createReadStream } from 'node:fs';
+import { GenericBotMessage, PostBackActionNone } from '@asgard-js/nodejs';
+
+const stream = createReadStream('invoice.pdf');
+const blob = await client.uploadBlob('channel-1', {
+  stream,
+  filename: 'invoice.pdf',
+  mime: 'application/pdf',
+});
+
+const message: GenericBotMessage = {
+  customChannelId: 'channel-1',
+  customMessageId: 'msg-2',
+  text: '請處理這份發票',
+  action: PostBackActionNone,
+  blobIds: [blob.blobId],
+};
+```
+
+## TriggerJSON
+
+一次性 JSON trigger — 不維持對話狀態：
+
+```typescript
+const result = await client.triggerJson({
+  event: 'order.created',
+  orderId: 'ORD-001',
+});
+console.log(result);
+```
+
+## TriggerForm
+
+帶選擇性檔案的 form trigger：
+
+```typescript
+import { createReadStream } from 'node:fs';
+
+const result = await client.triggerForm(
+  { type: 'invoice' },
+  {
+    stream: createReadStream('invoice.pdf'),
+    filename: 'invoice.pdf',
+    mime: 'application/pdf',
+  },
+);
+```
+
+不附檔案時，省略第二個參數：
+
+```typescript
+const result = await client.triggerForm({ type: 'invoice' });
+```
+
+## Sandbox 操作
+
+`BotProviderClient` 也包含 sandbox 相關端點。下列五個方法都以 sandbox name（由你的 provisioning flow 取得）作為第一個參數。
+
+### generateSandboxEditorOpenUrl
+
+取得一次性 sandbox editor 開啟 URL：
+
+```typescript
+const openUrl = await client.generateSandboxEditorOpenUrl('sbx-1');
+console.log(openUrl);
+```
+
+### sandboxFsList
+
+列出 sandbox 內某目錄：
+
+```typescript
+const result = await client.sandboxFsList('sbx-1', '/work');
+for (const entry of result.entries) {
+  console.log(`${entry.name}  dir=${entry.isDir}  size=${entry.sizeBytes}`);
+}
+```
+
+### sandboxFsRead
+
+以 raw bytes 讀取 sandbox 檔案。回傳的 `meta` 帶有從 response header 來的 `totalBytes` 與 `truncated`：
+
+```typescript
+const { data, meta } = await client.sandboxFsRead('sbx-1', '/work/report.csv');
+console.log(`讀了 ${data.length} / ${meta.totalBytes} bytes,truncated=${meta.truncated}`);
+console.log(data.toString('utf8'));
+```
+
+帶 offset / limit 做切片讀取:
+
+```typescript
+const { data } = await client.sandboxFsRead('sbx-1', '/work/report.csv', {
+  offsetBytes: 1024,
+  limitBytes: 4096,
+});
+```
+
+### sandboxFsWrite
+
+將檔案寫入 sandbox(multipart):
+
+```typescript
+import { createReadStream } from 'node:fs';
+
+const stream = createReadStream('report.csv');
+const result = await client.sandboxFsWrite(
+  'sbx-1',
+  '/work/report.csv',
+  { stream, filename: 'report.csv' },
+  { mode: 0o644, createOnly: false },
+);
+console.log(`寫入 ${result.bytesWritten} bytes`);
+```
+
+`mode` 與 `createOnly` 是可選的 — 省略則使用 server 預設。
+
+### sandboxHeartbeat
+
+延長 sandbox lease,回傳新的關機時間:
+
+```typescript
+const { shutdownAt } = await client.sandboxHeartbeat('sbx-1');
+console.log(`sandbox 將於 ${shutdownAt} 關閉`);
+```
+
+## SourceSetClient
+
+`SourceSetClient` 對應 SourceSet volume 端點。
+
+```typescript
+import { SourceSetClient } from '@asgard-js/nodejs';
+
+const ss = new SourceSetClient({
+  edgeServerHost: 'https://api.asgard-ai.com',
+  namespace: 'default',         // namespace
+  sourceSetName: 'my-sourceset',// source set 名稱
+  sourceSetApiKey: 'your-api-key',
+});
+```
+
+### listDirectory
+
+```typescript
+const result = await ss.listDirectory('/data');
+for (const entry of result.entries) {
+  console.log(`${entry.name}  dir=${entry.isDir}  size=${entry.sizeBytes}`);
+}
+```
+
+可選的分頁:
+
+```typescript
+const result = await ss.listDirectory('/data', { page: 1, pageSize: 50 });
+```
+
+### stat
+
+```typescript
+const info = await ss.stat('/data/report.csv');
+console.log(`exists=${info.exists} size=${info.sizeBytes}`);
+```
+
+### readFile
+
+```typescript
+const data = await ss.readFile('/data/report.csv');
+console.log(data.toString('utf8'));
+```
+
+帶 offset / limit 做切片讀取:
+
+```typescript
+const data = await ss.readFile('/data/report.csv', {
+  offsetBytes: 1024,
+  limitBytes: 4096,
+});
+```
+
+### writeFile
+
+```typescript
+import { createReadStream } from 'node:fs';
+
+const stream = createReadStream('report.csv');
+const result = await ss.writeFile('/data/report.csv', {
+  stream,
+  filename: 'report.csv',
+});
+console.log(`寫入 ${result.bytesWritten} bytes`);
+```
+
+### makeDirectory
+
+```typescript
+await ss.makeDirectory('/data/2026/reports');
+```
+
+### remove / removeAll
+
+```typescript
+// 移除單一檔案或空目錄
+await ss.remove('/data/old.csv');
+
+// 遞迴刪除目錄與所有內容
+await ss.removeAll('/data/archive');
+```
+
+## 自訂 headers 與 timeout
+
+`BotProviderConfig` 與 `SourceSetConfig` 都接受額外的 `headers` 與 `timeoutMs`:
+
+```typescript
+const client = new BotProviderClient({
+  edgeServerHost: 'https://api.asgard-ai.com',
+  namespace: 'default',
+  botProviderName: 'my-bot',
+  botProviderApiKey: 'your-api-key',
+  headers: { 'X-Request-Source': 'my-service' },
+  timeoutMs: 60_000,
+});
+
+const ss = new SourceSetClient({
+  edgeServerHost: 'https://api.asgard-ai.com',
+  namespace: 'default',
+  sourceSetName: 'my-sourceset',
+  sourceSetApiKey: 'your-api-key',
+  timeoutMs: 120_000,
+});
+```
+
+`X-API-KEY` header 永遠取自 config 對應的 API key 欄位,無法用 `headers` 覆寫。`timeoutMs` 預設 5 分鐘。注意:`newStreamer` 不套用 `timeoutMs` — SSE 連線是長連線,必須用 `streamer.close()` 結束。
+
+## 錯誤處理
+
+所有 client 方法在失敗時都會拋出 `AsgardError`:
+
+```typescript
+import { AsgardError } from '@asgard-js/nodejs';
 
 try {
-  const reply = await client.sendMessage(message, null);
+  const reply = await client.sendMessage(message);
 } catch (e) {
   if (e instanceof AsgardError) {
-    console.error('HTTP 狀態碼：', e.statusCode);   // 例如 401、500
-    console.error('錯誤代碼：  ', e.errorCode);     // Server 定義的錯誤代碼
-    console.error('錯誤訊息：  ', e.message);
+    console.error('HTTP status:', e.statusCode);   // 例如 401, 500
+    console.error('Error code :', e.errorCode);    // server 端定義的代碼
+    console.error('Message    :', e.message);
   }
 }
 ```
 
-SSE 串流在連線建立後遇到的錯誤，透過 streamer 來取得：
+對於 SSE 串流,連線建立後發生的錯誤會由 streamer 表面化:
 
 ```typescript
-// async iterator：拋出 AsgardError
+// async iterator — 迭代過程中拋出 AsgardError
 try {
   for await (const event of streamer) { /* ... */ }
 } catch (e) {
-  if (e instanceof AsgardError) { /* 處理錯誤 */ }
+  if (e instanceof AsgardError) { /* handle */ }
 }
 
-// pull-based：next() 回傳 false 後檢查 err()
+// pull-based — next() 回 false 後檢查 err()
 if (streamer.err()) {
   console.error(streamer.err());
 }
 ```
-
-## 發布套件
-
-推送 `v*` tag 時，GitHub Actions 會自動發布到 GitHub Packages：
-
-```bash
-npm version patch   # 或 minor / major
-git push --follow-tags
-```
-
-若要同時發布到 npm 公開 registry，請在 GitHub Actions 手動觸發 **Publish** workflow，並勾選 **Also publish to npm public registry** 選項（需設定 `NPM_TOKEN` secret）。
 
 ## 授權
 

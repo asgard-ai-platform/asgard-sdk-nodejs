@@ -1,14 +1,25 @@
 import {
   FileType,
+  FileTypeImage,
   MessageTemplateActionType,
+  MessageTemplateActionTypeMessage,
   MessageTemplateType,
+  MessageTemplateTypeText,
   PostBackAction,
+  PostBackActionNone,
+  PostBackActionResetChannel,
+  PostBackActionResponseToolCallConsent,
   SseEventType,
+  SseEventTypeMessageDelta,
+  SseEventTypeRunInit,
+  SseEventTypeSandboxLaunch,
+  SseEventTypeSandboxReady,
   ToolCallConsentResult,
+  ToolCallConsentResultAllowAlways,
 } from '../src/models.js';
 
 describe('Enum string values (must match Go sdk json tags)', () => {
-  it('SseEventType — 12 values, all prefixed asgard.*', () => {
+  it('SseEventType — 14 values, all prefixed asgard.*', () => {
     const values: SseEventType[] = [
       'asgard.run.init',
       'asgard.run.done',
@@ -22,8 +33,10 @@ describe('Enum string values (must match Go sdk json tags)', () => {
       'asgard.tool_call.complete',
       'asgard.tool_call.consent',
       'asgard.completion_model.usage',
+      'asgard.sandbox.launch',
+      'asgard.sandbox.ready',
     ];
-    expect(values).toHaveLength(12);
+    expect(values).toHaveLength(14);
     values.forEach((v) => expect(v).toMatch(/^asgard\./));
   });
 
@@ -68,6 +81,34 @@ describe('Enum string values (must match Go sdk json tags)', () => {
   it('MessageTemplateActionType — 3 values', () => {
     const values: MessageTemplateActionType[] = ['MESSAGE', 'URI', 'EMIT'];
     expect(values).toHaveLength(3);
+  });
+});
+
+describe('Named constants (must equal their wire-level string)', () => {
+  it('SseEventType constants', () => {
+    expect(SseEventTypeRunInit).toBe('asgard.run.init');
+    expect(SseEventTypeMessageDelta).toBe('asgard.message.delta');
+    expect(SseEventTypeSandboxLaunch).toBe('asgard.sandbox.launch');
+    expect(SseEventTypeSandboxReady).toBe('asgard.sandbox.ready');
+  });
+
+  it('PostBackAction constants', () => {
+    expect(PostBackActionNone).toBe('NONE');
+    expect(PostBackActionResetChannel).toBe('RESET_CHANNEL');
+    expect(PostBackActionResponseToolCallConsent).toBe('RESPONSE_TOOL_CALL_CONSENT');
+  });
+
+  it('FileType constants', () => {
+    expect(FileTypeImage).toBe('IMAGE');
+  });
+
+  it('ToolCallConsentResult constants', () => {
+    expect(ToolCallConsentResultAllowAlways).toBe('ALLOW_ALWAYS');
+  });
+
+  it('MessageTemplateType / ActionType constants', () => {
+    expect(MessageTemplateTypeText).toBe('TEXT');
+    expect(MessageTemplateActionTypeMessage).toBe('MESSAGE');
   });
 });
 

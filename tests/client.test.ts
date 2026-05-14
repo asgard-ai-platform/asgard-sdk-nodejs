@@ -327,4 +327,213 @@ describe('BotProviderClient', () => {
       ).rejects.toBeInstanceOf(AsgardError);
     });
   });
+
+  // ─── generateSandboxEditorOpenUrl ─────────────────────────────────────────
+
+  describe('generateSandboxEditorOpenUrl', () => {
+    it('POSTs to /sandbox/{name}/editor/open-url and returns openURL', async () => {
+      fetchSpy.mockResolvedValue(jsonResponse({ openURL: 'https://editor.example.com/abc' }));
+
+      const url = await client.generateSandboxEditorOpenUrl('sbx-1');
+
+      const [reqUrl, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      expect(reqUrl).toBe(
+        'https://edge.example.com/ns/my-ns/bot-provider/my-bot/sandbox/sbx-1/editor/open-url',
+      );
+      expect(init.method).toBe('POST');
+      expect(url).toBe('https://editor.example.com/abc');
+    });
+
+    it('throws AsgardError when openURL is missing from response', async () => {
+      fetchSpy.mockResolvedValue(jsonResponse({}));
+
+      await expect(
+        client.generateSandboxEditorOpenUrl('sbx-1'),
+      ).rejects.toBeInstanceOf(AsgardError);
+    });
+
+    it('URL-encodes sandbox name', async () => {
+      fetchSpy.mockResolvedValue(jsonResponse({ openURL: 'x' }));
+
+      await client.generateSandboxEditorOpenUrl('sbx/special name');
+
+      const [reqUrl] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      expect(reqUrl).toContain('/sandbox/sbx%2Fspecial%20name/');
+    });
+  });
+
+  // ─── sandboxFsList ────────────────────────────────────────────────────────
+
+  describe('sandboxFsList', () => {
+    it('GETs /sandbox/{name}/fs/list?path=...', async () => {
+      fetchSpy.mockResolvedValue(
+        jsonResponse({ entries: [], truncated: false }),
+      );
+
+      await client.sandboxFsList('sbx-1', '/work');
+
+      const [reqUrl, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      expect(reqUrl).toBe(
+        'https://edge.example.com/ns/my-ns/bot-provider/my-bot/sandbox/sbx-1/fs/list?path=%2Fwork',
+      );
+      expect(init.method).toBe('GET');
+    });
+
+    it('returns decoded result', async () => {
+      const result = {
+        entries: [
+          { name: 'a.txt', isDir: false, sizeBytes: 10, mtimeUnix: 1, mode: 0o644 },
+        ],
+        truncated: true,
+      };
+      fetchSpy.mockResolvedValue(jsonResponse(result));
+
+      const got = await client.sandboxFsList('sbx-1', '/');
+      expect(got).toEqual(result);
+    });
+  });
+
+  // ─── sandboxFsRead ────────────────────────────────────────────────────────
+
+  describe('sandboxFsRead', () => {
+    it('GETs /sandbox/{name}/fs/file and returns body + meta from headers', async () => {
+      fetchSpy.mockResolvedValue(
+        new Response(Buffer.from('hello world'), {
+          status: 200,
+          headers: {
+            'X-Total-Bytes': '11',
+            'X-Truncated': 'false',
+          },
+        }),
+      );
+
+      const { data, meta } = await client.sandboxFsRead('sbx-1', '/file.txt');
+
+      const [reqUrl, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      expect(reqUrl).toBe(
+        'https://edge.example.com/ns/my-ns/bot-provider/my-bot/sandbox/sbx-1/fs/file?path=%2Ffile.txt',
+      );
+      expect(init.method).toBe('GET');
+      expect(data.toString()).toBe('hello world');
+      expect(meta).toEqual({ totalBytes: 11, truncated: false });
+    });
+
+    it('passes offset_bytes and limit_bytes when provided', async () => {
+      fetchSpy.mockResolvedValue(
+        new Response(Buffer.from(''), {
+          status: 200,
+          headers: { 'X-Total-Bytes': '0', 'X-Truncated': 'false' },
+        }),
+      );
+
+      await client.sandboxFsRead('sbx-1', '/x', { offsetBytes: 100, limitBytes: 200 });
+
+      const [reqUrl] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      expect(reqUrl).toContain('offset_bytes=100');
+      expect(reqUrl).toContain('limit_bytes=200');
+    });
+
+    it('truncated flag is true when X-Truncated header is "true"', async () => {
+      fetchSpy.mockResolvedValue(
+        new Response(Buffer.from('partial'), {
+          status: 200,
+          headers: { 'X-Total-Bytes': '999', 'X-Truncated': 'true' },
+        }),
+      );
+
+      const { meta } = await client.sandboxFsRead('sbx-1', '/x');
+      expect(meta.truncated).toBe(true);
+      expect(meta.totalBytes).toBe(999);
+    });
+
+    it('throws AsgardError with server error envelope on non-2xx', async () => {
+      fetchSpy.mockResolvedValue(
+        new Response(
+          JSON.stringify({ isSuccess: false, data: null, error: 'not found', errorCode: 'NOT_FOUND' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } },
+        ),
+      );
+
+      try {
+        await client.sandboxFsRead('sbx-1', '/missing');
+        fail('should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(AsgardError);
+        expect((err as AsgardError).statusCode).toBe(404);
+        expect((err as AsgardError).errorCode).toBe('NOT_FOUND');
+      }
+    });
+
+    it('throws AsgardError with generic message when error body is not JSON', async () => {
+      fetchSpy.mockResolvedValue(new Response('plain text', { status: 500 }));
+
+      try {
+        await client.sandboxFsRead('sbx-1', '/x');
+        fail('should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(AsgardError);
+        expect((err as AsgardError).statusCode).toBe(500);
+      }
+    });
+  });
+
+  // ─── sandboxFsWrite ───────────────────────────────────────────────────────
+
+  describe('sandboxFsWrite', () => {
+    it('PUTs to /sandbox/{name}/fs/file with multipart body', async () => {
+      fetchSpy.mockResolvedValue(jsonResponse({ bytesWritten: 5 }));
+      const stream = Readable.from(Buffer.from('hello'));
+
+      const result = await client.sandboxFsWrite(
+        'sbx-1',
+        '/out.txt',
+        { stream, filename: 'out.txt' },
+      );
+
+      const [reqUrl, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      const headers = init.headers as Record<string, string>;
+      expect(reqUrl).toBe(
+        'https://edge.example.com/ns/my-ns/bot-provider/my-bot/sandbox/sbx-1/fs/file?path=%2Fout.txt',
+      );
+      expect(init.method).toBe('PUT');
+      expect(headers['content-type']).toMatch(/multipart\/form-data/);
+      expect(init.body).toBeInstanceOf(Buffer);
+      expect(result.bytesWritten).toBe(5);
+    });
+
+    it('appends mode and create_only query params when set', async () => {
+      fetchSpy.mockResolvedValue(jsonResponse({ bytesWritten: 0 }));
+      const stream = Readable.from(Buffer.from(''));
+
+      await client.sandboxFsWrite(
+        'sbx-1',
+        '/x',
+        { stream, filename: 'x' },
+        { mode: 0o755, createOnly: true },
+      );
+
+      const [reqUrl] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      expect(reqUrl).toContain(`mode=${0o755}`);
+      expect(reqUrl).toContain('create_only=true');
+    });
+  });
+
+  // ─── sandboxHeartbeat ─────────────────────────────────────────────────────
+
+  describe('sandboxHeartbeat', () => {
+    it('POSTs to /sandbox/{name}/heartbeat and returns shutdownAt', async () => {
+      fetchSpy.mockResolvedValue(
+        jsonResponse({ shutdownAt: '2026-05-14T10:00:00Z' }),
+      );
+
+      const result = await client.sandboxHeartbeat('sbx-1');
+
+      const [reqUrl, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      expect(reqUrl).toBe(
+        'https://edge.example.com/ns/my-ns/bot-provider/my-bot/sandbox/sbx-1/heartbeat',
+      );
+      expect(init.method).toBe('POST');
+      expect(result.shutdownAt).toBe('2026-05-14T10:00:00Z');
+    });
+  });
 });

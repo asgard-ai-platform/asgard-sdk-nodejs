@@ -1,5 +1,6 @@
 import FormData from 'form-data';
-import { Readable, Writable } from 'stream';
+import { Readable } from 'stream';
+import { bufferFormData, encodePath, parseApiResponse } from './_internal.js';
 import { BotProviderConfig, MessageRequestOptions } from './config.js';
 import { AsgardError } from './error.js';
 import {
@@ -7,14 +8,14 @@ import {
   Blob,
   GenericBotMessage,
   GenericBotReply,
+  SandboxFsListResult,
+  SandboxFsReadMeta,
+  SandboxFsWriteResult,
+  SandboxHeartbeatResult,
 } from './models.js';
 import { BotProviderStreamer } from './streamer.js';
 
 const DEFAULT_TIMEOUT_MS = 300_000;
-
-function encodePath(segment: string): string {
-  return encodeURIComponent(segment);
-}
 
 function buildUrl(
   base: string,
@@ -40,49 +41,6 @@ function buildHeaders(
     headers['X-ASGARD-USER-IDENTITY-HINT'] = opts.userIdentityHint;
   }
   return headers;
-}
-
-async function parseApiResponse<T>(resp: Response): Promise<T> {
-  let body: ApiResponse<T>;
-  try {
-    body = (await resp.json()) as ApiResponse<T>;
-  } catch {
-    throw new AsgardError(
-      `Failed to parse response (HTTP ${resp.status})`,
-      resp.status,
-    );
-  }
-  if (!resp.ok || !body.isSuccess) {
-    throw new AsgardError(
-      body.error ?? `Request failed (HTTP ${resp.status})`,
-      resp.status,
-      body.errorCode ?? undefined,
-    );
-  }
-  return body.data;
-}
-
-/**
- * Buffer an entire form-data Readable stream into a single Buffer.
- * form-data extends CombinedStream (old-style stream) which only starts
- * flowing when pipe() is called — pipe() internally calls resume().
- */
-function bufferFormData(form: FormData): Promise<Buffer> {
-  return new Promise<Buffer>((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    const writer = new Writable({
-      write(chunk: Buffer, _, cb) {
-        chunks.push(chunk);
-        cb();
-      },
-      final(cb) {
-        resolve(Buffer.concat(chunks));
-        cb();
-      },
-    });
-    writer.on('error', reject);
-    form.pipe(writer);
-  });
 }
 
 export class BotProviderClient {
@@ -219,5 +177,134 @@ export class BotProviderClient {
       );
     }
     return blobs[0];
+  }
+
+  private sandboxBasePath(sandboxName: string): string {
+    return `${this.basePath()}/sandbox/${encodePath(sandboxName)}`;
+  }
+
+  /**
+   * Request a one-time editor open URL for the given sandbox.
+   * Calls POST /sandbox/{sandboxName}/editor/open-url.
+   */
+  async generateSandboxEditorOpenUrl(sandboxName: string): Promise<string> {
+    const url = `${this.config.edgeServerHost}${this.sandboxBasePath(sandboxName)}/editor/open-url`;
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: buildHeaders(this.config, undefined, {
+        'Content-Type': 'application/json',
+      }),
+      signal: AbortSignal.timeout(this.timeoutMs),
+    });
+    const data = await parseApiResponse<{ openURL: string }>(resp);
+    if (!data?.openURL) {
+      throw new AsgardError('response missing openURL field', resp.status);
+    }
+    return data.openURL;
+  }
+
+  async sandboxFsList(
+    sandboxName: string,
+    path: string,
+  ): Promise<SandboxFsListResult> {
+    const qs = new URLSearchParams({ path }).toString();
+    const url = `${this.config.edgeServerHost}${this.sandboxBasePath(sandboxName)}/fs/list?${qs}`;
+    const resp = await fetch(url, {
+      method: 'GET',
+      headers: buildHeaders(this.config),
+      signal: AbortSignal.timeout(this.timeoutMs),
+    });
+    return parseApiResponse<SandboxFsListResult>(resp);
+  }
+
+  /**
+   * Read raw bytes from a sandbox file. Returns the body together with
+   * meta extracted from X-Total-Bytes / X-Truncated response headers.
+   */
+  async sandboxFsRead(
+    sandboxName: string,
+    path: string,
+    opts?: { offsetBytes?: number; limitBytes?: number },
+  ): Promise<{ data: Buffer; meta: SandboxFsReadMeta }> {
+    const qs = new URLSearchParams({ path });
+    if (opts?.offsetBytes != null) qs.set('offset_bytes', String(opts.offsetBytes));
+    if (opts?.limitBytes != null) qs.set('limit_bytes', String(opts.limitBytes));
+    const url = `${this.config.edgeServerHost}${this.sandboxBasePath(sandboxName)}/fs/file?${qs.toString()}`;
+    const resp = await fetch(url, {
+      method: 'GET',
+      headers: buildHeaders(this.config),
+      signal: AbortSignal.timeout(this.timeoutMs),
+    });
+    if (!resp.ok) {
+      // Endpoint returns raw bytes on success but an ApiResponse JSON envelope on failure.
+      const text = await resp.text().catch(() => '');
+      try {
+        const body = JSON.parse(text) as ApiResponse<unknown>;
+        if (body && body.isSuccess === false) {
+          throw new AsgardError(
+            body.error ?? `sandbox fs read failed (HTTP ${resp.status})`,
+            resp.status,
+            body.errorCode ?? undefined,
+          );
+        }
+      } catch (e) {
+        if (e instanceof AsgardError) throw e;
+      }
+      throw new AsgardError(
+        `sandbox fs read failed (HTTP ${resp.status})`,
+        resp.status,
+      );
+    }
+    const ab = await resp.arrayBuffer();
+    const meta: SandboxFsReadMeta = {
+      totalBytes: Number(resp.headers.get('X-Total-Bytes') ?? 0),
+      truncated: resp.headers.get('X-Truncated') === 'true',
+    };
+    return { data: Buffer.from(ab), meta };
+  }
+
+  /**
+   * Write a file into the sandbox via multipart/form-data (field "file").
+   * `mode` is an octal POSIX mode (e.g. 0o644); server applies its default when omitted.
+   * `createOnly: true` makes the call fail if the path already exists.
+   */
+  async sandboxFsWrite(
+    sandboxName: string,
+    path: string,
+    file: { stream: Readable; filename: string },
+    opts?: { mode?: number; createOnly?: boolean },
+  ): Promise<SandboxFsWriteResult> {
+    const qs = new URLSearchParams({ path });
+    if (opts?.mode != null) qs.set('mode', String(opts.mode));
+    if (opts?.createOnly) qs.set('create_only', 'true');
+    const url = `${this.config.edgeServerHost}${this.sandboxBasePath(sandboxName)}/fs/file?${qs.toString()}`;
+    const form = new FormData();
+    form.append('file', file.stream, {
+      filename: file.filename,
+      contentType: 'application/octet-stream',
+    });
+    const body = await bufferFormData(form);
+    const resp = await fetch(url, {
+      method: 'PUT',
+      headers: buildHeaders(this.config, undefined, form.getHeaders()),
+      body,
+      signal: AbortSignal.timeout(this.timeoutMs),
+    });
+    return parseApiResponse<SandboxFsWriteResult>(resp);
+  }
+
+  /**
+   * Extend the sandbox lease. Returns the new shutdown deadline.
+   */
+  async sandboxHeartbeat(
+    sandboxName: string,
+  ): Promise<SandboxHeartbeatResult> {
+    const url = `${this.config.edgeServerHost}${this.sandboxBasePath(sandboxName)}/heartbeat`;
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: buildHeaders(this.config),
+      signal: AbortSignal.timeout(this.timeoutMs),
+    });
+    return parseApiResponse<SandboxHeartbeatResult>(resp);
   }
 }

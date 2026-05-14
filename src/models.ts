@@ -12,7 +12,9 @@ export type SseEventType =
   | 'asgard.tool_call.start'
   | 'asgard.tool_call.complete'
   | 'asgard.tool_call.consent'
-  | 'asgard.completion_model.usage';
+  | 'asgard.completion_model.usage'
+  | 'asgard.sandbox.launch'
+  | 'asgard.sandbox.ready';
 
 export type PostBackAction =
   | 'NONE'
@@ -40,6 +42,53 @@ export type ImageAspectRatio = 'rectangle' | 'square';
 export type ImageSize = 'cover' | 'contain';
 export type MessageTemplateRowType = 'OBJECT' | 'ARRAY';
 export type MessageTemplateTableColumnFormat = 'DATE' | 'DATE_TIME' | 'CURRENCY';
+
+// ─── Named constants (mirror Go's pkg/models constants) ─────────────────────
+// Prefer these over inline string literals — they autocomplete and are
+// refactor-safe. Wire-level JSON values are the string on the right-hand side.
+
+export const SseEventTypeRunInit: SseEventType = 'asgard.run.init';
+export const SseEventTypeRunDone: SseEventType = 'asgard.run.done';
+export const SseEventTypeRunError: SseEventType = 'asgard.run.error';
+export const SseEventTypeProcessStart: SseEventType = 'asgard.process.start';
+export const SseEventTypeProcessComplete: SseEventType = 'asgard.process.complete';
+export const SseEventTypeMessageStart: SseEventType = 'asgard.message.start';
+export const SseEventTypeMessageDelta: SseEventType = 'asgard.message.delta';
+export const SseEventTypeMessageComplete: SseEventType = 'asgard.message.complete';
+export const SseEventTypeToolCallStart: SseEventType = 'asgard.tool_call.start';
+export const SseEventTypeToolCallComplete: SseEventType = 'asgard.tool_call.complete';
+export const SseEventTypeToolCallConsent: SseEventType = 'asgard.tool_call.consent';
+export const SseEventTypeCompletionModelUsage: SseEventType = 'asgard.completion_model.usage';
+export const SseEventTypeSandboxLaunch: SseEventType = 'asgard.sandbox.launch';
+export const SseEventTypeSandboxReady: SseEventType = 'asgard.sandbox.ready';
+
+export const PostBackActionNone: PostBackAction = 'NONE';
+export const PostBackActionResetChannel: PostBackAction = 'RESET_CHANNEL';
+export const PostBackActionResponseToolCallConsent: PostBackAction = 'RESPONSE_TOOL_CALL_CONSENT';
+
+export const FileTypeBinary: FileType = 'BINARY';
+export const FileTypeImage: FileType = 'IMAGE';
+export const FileTypeVideo: FileType = 'VIDEO';
+export const FileTypeAudio: FileType = 'AUDIO';
+export const FileTypeDocument: FileType = 'DOCUMENT';
+
+export const ToolCallConsentResultAllowOnce: ToolCallConsentResult = 'ALLOW_ONCE';
+export const ToolCallConsentResultAllowAlways: ToolCallConsentResult = 'ALLOW_ALWAYS';
+export const ToolCallConsentResultDenyOnce: ToolCallConsentResult = 'DENY_ONCE';
+
+export const MessageTemplateTypeText: MessageTemplateType = 'TEXT';
+export const MessageTemplateTypeImage: MessageTemplateType = 'IMAGE';
+export const MessageTemplateTypeVideo: MessageTemplateType = 'VIDEO';
+export const MessageTemplateTypeAudio: MessageTemplateType = 'AUDIO';
+export const MessageTemplateTypeLocation: MessageTemplateType = 'LOCATION';
+export const MessageTemplateTypeButton: MessageTemplateType = 'BUTTON';
+export const MessageTemplateTypeCarousel: MessageTemplateType = 'CAROUSEL';
+export const MessageTemplateTypeChart: MessageTemplateType = 'CHART';
+export const MessageTemplateTypeTable: MessageTemplateType = 'TABLE';
+
+export const MessageTemplateActionTypeMessage: MessageTemplateActionType = 'MESSAGE';
+export const MessageTemplateActionTypeUri: MessageTemplateActionType = 'URI';
+export const MessageTemplateActionTypeEmit: MessageTemplateActionType = 'EMIT';
 
 // ─── Errors ─────────────────────────────────────────────────────────────────
 
@@ -270,6 +319,16 @@ export interface GenericBotSseEventFactCompletionModelUsage {
   totalTokens: number;
 }
 
+export interface GenericBotSseEventFactSandboxLaunch {
+  sandboxName: string;
+  blueprintName: string;
+}
+
+export interface GenericBotSseEventFactSandboxReady {
+  sandboxName: string;
+  blueprintName: string;
+}
+
 export interface GenericBotSseEventFact {
   runInit: GenericBotSseEventFactRunInit | null;
   runDone: GenericBotSseEventFactRunDone | null;
@@ -283,6 +342,70 @@ export interface GenericBotSseEventFact {
   toolCallComplete: GenericBotSseEventFactToolCallComplete | null;
   toolCallConsent: GenericBotSseEventFactToolCallConsent | null;
   completionModelUsage: GenericBotSseEventFactCompletionModelUsage | null;
+  sandboxLaunch: GenericBotSseEventFactSandboxLaunch | null;
+  sandboxReady: GenericBotSseEventFactSandboxReady | null;
+}
+
+// ─── Sandbox FS ──────────────────────────────────────────────────────────────
+
+export interface SandboxFsDirEntry {
+  name: string;
+  isDir: boolean;
+  sizeBytes: number;
+  mtimeUnix: number;
+  mode: number;
+}
+
+export interface SandboxFsListResult {
+  entries: SandboxFsDirEntry[];
+  truncated: boolean;
+}
+
+/** Metadata returned alongside file bytes by sandboxFsRead — populated from X-Total-Bytes / X-Truncated response headers. */
+export interface SandboxFsReadMeta {
+  totalBytes: number;
+  truncated: boolean;
+}
+
+export interface SandboxFsWriteResult {
+  bytesWritten: number;
+}
+
+export interface SandboxHeartbeatResult {
+  /** RFC3339 timestamp of the new sandbox shutdown deadline. */
+  shutdownAt: string;
+}
+
+// ─── SourceSet ───────────────────────────────────────────────────────────────
+
+export interface SourceSetDirEntry {
+  name: string;
+  isDir: boolean;
+  sizeBytes: number;
+  mtimeUnix: number;
+}
+
+export interface SourceSetPaging {
+  index: number;
+  size: number;
+  total: number;
+}
+
+export interface SourceSetListDirectoryResult {
+  entries: SourceSetDirEntry[];
+  paging: SourceSetPaging | null;
+}
+
+export interface SourceSetStatResult {
+  exists: boolean;
+  isDir: boolean;
+  sizeBytes: number;
+  mtimeUnix: number;
+  etag: string;
+}
+
+export interface SourceSetWriteFileResult {
+  bytesWritten: number;
 }
 
 export interface GenericBotSseEvent {

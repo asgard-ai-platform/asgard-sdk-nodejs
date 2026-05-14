@@ -1,11 +1,15 @@
 {
-  "name": "@asgard-ai-platform/asgard-sdk-nodejs",
-  "version": "1.0.0",
-  "description": "Asgard Edge Server Node.js SDK",
+  "name": "@asgard-js/nodejs",
+  "version": "0.1.0",
+  "description": "Node.js / TypeScript SDK for the Asgard Edge Server BotProvider and SourceSet APIs.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "README.zh-TW.md",
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc",
@@ -13,13 +17,23 @@
     "lint": "eslint src --ext .ts",
     "prepublishOnly": "npm run build"
   },
-  "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
-  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/asgard-ai-platform/asgard-sdk-nodejs.git"
   },
+  "homepage": "https://github.com/asgard-ai-platform/asgard-sdk-nodejs#readme",
+  "bugs": {
+    "url": "https://github.com/asgard-ai-platform/asgard-sdk-nodejs/issues"
+  },
+  "keywords": [
+    "asgard",
+    "asgard-ai",
+    "sdk",
+    "edge-server",
+    "bot-provider",
+    "source-set",
+    "sse"
+  ],
   "license": "MIT",
   "dependencies": {
     "form-data": "^4.0.5"

@@ -1,4 +1,8 @@
-name: Publish to GitHub Packages
+name: Publish to npm
+
+# Publishes @asgard-js/nodejs to the public npm registry using npm Trusted
+# Publishing (OIDC). The repository must be registered as a trusted publisher
+# for this package on npmjs.com before the first run — no NPM_TOKEN is used.
 
 on:
   push:
@@ -7,14 +11,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to publish (e.g. 1.0.0). Leave empty to use package.json version.'
+        description: 'Version to publish (e.g. 0.1.0). Leave empty to use package.json version.'
         required: false
         type: string
-      npm_public:
-        description: 'Also publish to npm public registry'
-        required: false
-        type: boolean
-        default: false
 
 jobs:
   publish:
@@ -22,17 +21,16 @@ jobs:
 
     permissions:
       contents: read
-      packages: write
+      id-token: write   # required for npm Trusted Publishing (OIDC)
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node.js (GitHub Packages registry)
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          registry-url: 'https://npm.pkg.github.com'
-          scope: '@asgard-ai-platform'
+          registry-url: 'https://registry.npmjs.org'
           cache: npm
 
       - name: Install dependencies
@@ -40,6 +38,9 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Test
+        run: npm test
 
       - name: Set release version
         run: |
@@ -49,15 +50,5 @@ jobs:
             npm version ${{ inputs.version }} --no-git-tag-version
           fi
 
-      - name: Publish to GitHub Packages
-        run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish to npm public registry
-        if: ${{ inputs.npm_public == true }}
-        run: |
-          npm config set registry https://registry.npmjs.org/
-          npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish to npm (public, with provenance)
+        run: npm publish --provenance --access public

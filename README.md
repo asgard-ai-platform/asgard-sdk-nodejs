@@ -1,174 +1,388 @@
 # asgard-sdk-nodejs
 
-Node.js / TypeScript SDK for the Asgard Edge Server BotProvider API.
+Node.js / TypeScript SDK for Asgard EdgeServer.
 
-## Requirements
+> 繁體中文版：[README.zh-TW.md](README.zh-TW.md)
 
-- Node.js 18+
-- npm 8+
+## Table of Contents
+
+- [Installation](#installation)
+- [BotProviderClient](#botproviderclient)
+- [Streaming (SSE)](#streaming-sse)
+- [SendMessage (REST)](#sendmessage-rest)
+- [UploadBlob](#uploadblob)
+- [TriggerJSON](#triggerjson)
+- [TriggerForm](#triggerform)
+- [Sandbox operations](#sandbox-operations)
+  - [generateSandboxEditorOpenUrl](#generatesandboxeditoropenurl)
+  - [sandboxFsList](#sandboxfslist)
+  - [sandboxFsRead](#sandboxfsread)
+  - [sandboxFsWrite](#sandboxfswrite)
+  - [sandboxHeartbeat](#sandboxheartbeat)
+- [SourceSetClient](#sourcesetclient)
+  - [listDirectory](#listdirectory)
+  - [stat](#stat)
+  - [readFile](#readfile)
+  - [writeFile](#writefile)
+  - [makeDirectory](#makedirectory)
+  - [remove / removeAll](#remove--removeall)
+- [Custom headers and timeout](#custom-headers-and-timeout)
+- [Error handling](#error-handling)
+- [License](#license)
 
 ## Installation
 
-### From GitHub Packages
-
-Add the GitHub Packages registry to your project's `.npmrc`:
-
-```
-@asgard-ai-platform:registry=https://npm.pkg.github.com
-//npm.pkg.github.com/:_authToken=YOUR_GITHUB_TOKEN
-```
-
-Then install:
+Requires Node.js 18+ (uses the global `fetch` and `AbortSignal.timeout`).
 
 ```bash
-npm install @asgard-ai-platform/asgard-sdk-nodejs
+npm install @asgard-js/nodejs
 ```
 
-Authentication requires a GitHub personal access token with `read:packages` scope.
+## BotProviderClient
 
-### Build locally
-
-```bash
-git clone https://github.com/asgard-ai-platform/asgard-sdk-nodejs.git
-cd asgard-sdk-nodejs
-npm install
-npm run build
-```
-
-## Quick Start
-
-### Send a message (blocking)
+`BotProviderClient` is the single interface for all bot-provider APIs: streaming, messaging, blob upload, function triggers, and sandbox operations.
 
 ```typescript
-import { AsgardSdk, BotProviderConfig, GenericBotMessage } from '@asgard-ai-platform/asgard-sdk-nodejs';
+import { BotProviderClient } from '@asgard-js/nodejs';
 
-const config: BotProviderConfig = {
-  edgeServerHost: 'https://edge.example.com',
-  namespace: 'my-namespace',
+const client = new BotProviderClient({
+  edgeServerHost: 'https://api.asgard-ai.com',
+  namespace: 'default',         // namespace
+  botProviderName: 'my-bot',    // bot provider name
+  botProviderApiKey: 'your-api-key',
+});
+```
+
+## Streaming (SSE)
+
+The most common usage — stream bot responses event by event:
+
+```typescript
+import {
+  BotProviderClient,
+  GenericBotMessage,
+  PostBackActionNone,
+  SseEventTypeMessageComplete,
+  SseEventTypeMessageDelta,
+  SseEventTypeRunError,
+} from '@asgard-js/nodejs';
+
+const client = new BotProviderClient({
+  edgeServerHost: 'https://api.asgard-ai.com',
+  namespace: 'default',
   botProviderName: 'my-bot',
   botProviderApiKey: 'your-api-key',
-};
-
-const client = AsgardSdk.newClient(config);
+});
 
 const message: GenericBotMessage = {
-  customChannelId: 'channel-001',
-  text: 'Hello!',
+  customChannelId: 'channel-1',
+  customMessageId: 'msg-1',
+  text: 'Hello',
+  action: PostBackActionNone,
 };
 
-const reply = await client.sendMessage(message, null);
-reply.messages?.forEach(m => console.log(m.text));
-```
-
-### Stream events (SSE)
-
-```typescript
-const streamer = await client.newStreamer(message, null);
+const streamer = await client.newStreamer(message);
 try {
-  // Option 1: async iterator (recommended)
   for await (const event of streamer) {
-    console.log(event.eventType, event.fact);
+    switch (event.eventType) {
+      case SseEventTypeMessageDelta:
+        if (event.fact.messageDelta) {
+          process.stdout.write(event.fact.messageDelta.message.text);
+        }
+        break;
+      case SseEventTypeMessageComplete:
+        process.stdout.write('\n');
+        break;
+      case SseEventTypeRunError:
+        if (event.fact.runError) {
+          console.error('run error:', event.fact.runError.error.message);
+        }
+        break;
+    }
   }
-
-  // Option 2: pull-based API
-  while (streamer.next()) {
-    const event = streamer.current();
-    console.log(event?.eventType, event?.fact);
-  }
-  if (streamer.err()) throw streamer.err();
 } finally {
   await streamer.close();
 }
 ```
 
-### Using BotAgent (higher-level interface)
+Each enum-style type (`SseEventType`, `PostBackAction`, `FileType`, `ToolCallConsentResult`, `MessageTemplateType`, `MessageTemplateActionType`) has matching `SseEventType*` / `PostBackAction*` / etc. constants exported alongside the type — prefer those over inline string literals.
+
+The streamer also exposes a pull-based API (`next()` / `current()` / `err()`) if you prefer not to use `for await`.
+
+## SendMessage (REST)
+
+Synchronous message — waits for the full reply:
 
 ```typescript
-import { AsgardSdk } from '@asgard-ai-platform/asgard-sdk-nodejs';
-
-const agent = AsgardSdk.newBotAgent(
-  'https://edge.example.com',
-  'my-namespace',
-  'my-bot',
-  'your-api-key',
-);
-
-const reply = await agent.sendMessage(message, null);
+const reply = await client.sendMessage(message);
+for (const m of reply.messages) {
+  console.log(m.text);
+}
 ```
 
-### Using FunctionAgent
+Pass `MessageRequestOptions` to enable debug mode or set a user identity hint:
 
 ```typescript
-const fn = AsgardSdk.newFunctionAgent(
-  'https://edge.example.com',
-  'my-namespace',
-  'my-function',
-  'your-api-key',
-);
-
-const result = await fn.triggerJson({ key: 'value' });
-```
-
-### Upload a blob
-
-```typescript
-import { createReadStream } from 'fs';
-
-const stream = createReadStream('photo.jpg');
-const blob = await client.uploadBlob('channel-001', stream, 'photo.jpg', 'image/jpeg');
-console.log('Uploaded:', blob.blobId);
-```
-
-### Upload a form with file
-
-```typescript
-const stream = createReadStream('data.csv');
-const result = await client.triggerForm(
-  { mode: 'csv' },
-  stream,
-  'data.csv',
-  'text/csv',
-);
-```
-
-## Configuration
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `edgeServerHost` | ✓ | Edge Server base URL (no trailing slash) |
-| `namespace` | ✓ | Namespace identifier |
-| `botProviderName` | ✓ | Bot provider name |
-| `botProviderApiKey` | ✓ | API key (sent as `X-API-KEY` header) |
-| `fetchClient` | — | Custom fetch function; defaults to global `fetch` (Node.js 18+) |
-| `headers` | — | Extra request headers (cannot override `X-API-KEY`) |
-
-### Per-request options
-
-```typescript
-import { MessageRequestOptions } from '@asgard-ai-platform/asgard-sdk-nodejs';
+import { MessageRequestOptions } from '@asgard-js/nodejs';
 
 const opts: MessageRequestOptions = {
-  isDebug: true,                      // appends ?is_debug=true
-  userIdentityHint: 'user@example.com', // X-ASGARD-USER-IDENTITY-HINT (max 128 chars)
+  isDebug: true,
+  userIdentityHint: 'user-123',  // forwarded as X-ASGARD-USER-IDENTITY-HINT (max 128 chars)
 };
-
 const reply = await client.sendMessage(message, opts);
 ```
 
-## Error Handling
+## UploadBlob
+
+Upload a file to attach to subsequent messages via `blobIds`:
+
+```typescript
+import { createReadStream } from 'node:fs';
+import { GenericBotMessage, PostBackActionNone } from '@asgard-js/nodejs';
+
+const stream = createReadStream('invoice.pdf');
+const blob = await client.uploadBlob('channel-1', {
+  stream,
+  filename: 'invoice.pdf',
+  mime: 'application/pdf',
+});
+
+const message: GenericBotMessage = {
+  customChannelId: 'channel-1',
+  customMessageId: 'msg-2',
+  text: 'Please process this invoice',
+  action: PostBackActionNone,
+  blobIds: [blob.blobId],
+};
+```
+
+## TriggerJSON
+
+One-shot JSON trigger — no conversation state:
+
+```typescript
+const result = await client.triggerJson({
+  event: 'order.created',
+  orderId: 'ORD-001',
+});
+console.log(result);
+```
+
+## TriggerForm
+
+Form trigger with an optional file attachment:
+
+```typescript
+import { createReadStream } from 'node:fs';
+
+const result = await client.triggerForm(
+  { type: 'invoice' },
+  {
+    stream: createReadStream('invoice.pdf'),
+    filename: 'invoice.pdf',
+    mime: 'application/pdf',
+  },
+);
+```
+
+To trigger without a file, omit the second argument:
+
+```typescript
+const result = await client.triggerForm({ type: 'invoice' });
+```
+
+## Sandbox operations
+
+`BotProviderClient` also exposes the sandbox endpoints. All five methods take the sandbox name (returned by your provisioning flow) as the first argument.
+
+### generateSandboxEditorOpenUrl
+
+Request a one-time URL that opens the sandbox in the editor:
+
+```typescript
+const openUrl = await client.generateSandboxEditorOpenUrl('sbx-1');
+console.log(openUrl);
+```
+
+### sandboxFsList
+
+List directory contents inside the sandbox:
+
+```typescript
+const result = await client.sandboxFsList('sbx-1', '/work');
+for (const entry of result.entries) {
+  console.log(`${entry.name}  dir=${entry.isDir}  size=${entry.sizeBytes}`);
+}
+```
+
+### sandboxFsRead
+
+Read a sandbox file as raw bytes. The returned `meta` carries `totalBytes` and `truncated` (from response headers):
+
+```typescript
+const { data, meta } = await client.sandboxFsRead('sbx-1', '/work/report.csv');
+console.log(`read ${data.length} of ${meta.totalBytes} bytes, truncated=${meta.truncated}`);
+console.log(data.toString('utf8'));
+```
+
+Read a slice with optional offset and limit (bytes):
+
+```typescript
+const { data } = await client.sandboxFsRead('sbx-1', '/work/report.csv', {
+  offsetBytes: 1024,
+  limitBytes: 4096,
+});
+```
+
+### sandboxFsWrite
+
+Upload a file into the sandbox (multipart):
+
+```typescript
+import { createReadStream } from 'node:fs';
+
+const stream = createReadStream('report.csv');
+const result = await client.sandboxFsWrite(
+  'sbx-1',
+  '/work/report.csv',
+  { stream, filename: 'report.csv' },
+  { mode: 0o644, createOnly: false },
+);
+console.log(`wrote ${result.bytesWritten} bytes`);
+```
+
+`mode` and `createOnly` are optional — omit them to use the server defaults.
+
+### sandboxHeartbeat
+
+Extend the sandbox lease. Returns the new shutdown deadline:
+
+```typescript
+const { shutdownAt } = await client.sandboxHeartbeat('sbx-1');
+console.log(`sandbox will shut down at ${shutdownAt}`);
+```
+
+## SourceSetClient
+
+`SourceSetClient` is the interface for SourceSet volume operations.
+
+```typescript
+import { SourceSetClient } from '@asgard-js/nodejs';
+
+const ss = new SourceSetClient({
+  edgeServerHost: 'https://api.asgard-ai.com',
+  namespace: 'default',         // namespace
+  sourceSetName: 'my-sourceset',// source set name
+  sourceSetApiKey: 'your-api-key',
+});
+```
+
+### listDirectory
+
+```typescript
+const result = await ss.listDirectory('/data');
+for (const entry of result.entries) {
+  console.log(`${entry.name}  dir=${entry.isDir}  size=${entry.sizeBytes}`);
+}
+```
+
+Pagination is optional:
+
+```typescript
+const result = await ss.listDirectory('/data', { page: 1, pageSize: 50 });
+```
+
+### stat
+
+```typescript
+const info = await ss.stat('/data/report.csv');
+console.log(`exists=${info.exists} size=${info.sizeBytes}`);
+```
+
+### readFile
+
+```typescript
+const data = await ss.readFile('/data/report.csv');
+console.log(data.toString('utf8'));
+```
+
+Read a slice with optional offset and limit (bytes):
+
+```typescript
+const data = await ss.readFile('/data/report.csv', {
+  offsetBytes: 1024,
+  limitBytes: 4096,
+});
+```
+
+### writeFile
+
+```typescript
+import { createReadStream } from 'node:fs';
+
+const stream = createReadStream('report.csv');
+const result = await ss.writeFile('/data/report.csv', {
+  stream,
+  filename: 'report.csv',
+});
+console.log(`wrote ${result.bytesWritten} bytes`);
+```
+
+### makeDirectory
+
+```typescript
+await ss.makeDirectory('/data/2026/reports');
+```
+
+### remove / removeAll
+
+```typescript
+// Remove a single file or empty directory
+await ss.remove('/data/old.csv');
+
+// Recursively delete a directory and all its contents
+await ss.removeAll('/data/archive');
+```
+
+## Custom headers and timeout
+
+Both `BotProviderConfig` and `SourceSetConfig` accept additional `headers` and a `timeoutMs`:
+
+```typescript
+const client = new BotProviderClient({
+  edgeServerHost: 'https://api.asgard-ai.com',
+  namespace: 'default',
+  botProviderName: 'my-bot',
+  botProviderApiKey: 'your-api-key',
+  headers: { 'X-Request-Source': 'my-service' },
+  timeoutMs: 60_000,
+});
+
+const ss = new SourceSetClient({
+  edgeServerHost: 'https://api.asgard-ai.com',
+  namespace: 'default',
+  sourceSetName: 'my-sourceset',
+  sourceSetApiKey: 'your-api-key',
+  timeoutMs: 120_000,
+});
+```
+
+The `X-API-KEY` header is always set from the config's API key field and cannot be overridden via `headers`. The `timeoutMs` default is 5 minutes. Note: `timeoutMs` is not applied to `newStreamer` — SSE connections are long-lived and must be ended with `streamer.close()`.
+
+## Error handling
 
 All client methods throw `AsgardError` on failure:
 
 ```typescript
-import { AsgardError } from '@asgard-ai-platform/asgard-sdk-nodejs';
+import { AsgardError } from '@asgard-js/nodejs';
 
 try {
-  const reply = await client.sendMessage(message, null);
+  const reply = await client.sendMessage(message);
 } catch (e) {
   if (e instanceof AsgardError) {
-    console.error('HTTP status :', e.statusCode);   // e.g. 401, 500
-    console.error('Error code  :', e.errorCode);    // server-defined code
-    console.error('Message     :', e.message);
+    console.error('HTTP status:', e.statusCode);   // e.g. 401, 500
+    console.error('Error code :', e.errorCode);    // server-defined code
+    console.error('Message    :', e.message);
   }
 }
 ```
@@ -176,29 +390,18 @@ try {
 For SSE streams, errors encountered after the connection is established are surfaced via the streamer:
 
 ```typescript
-// async iterator: throws AsgardError
+// async iterator — throws AsgardError mid-iteration
 try {
   for await (const event of streamer) { /* ... */ }
 } catch (e) {
   if (e instanceof AsgardError) { /* handle */ }
 }
 
-// pull-based: check err() after next() returns false
+// pull-based — check err() after next() returns false
 if (streamer.err()) {
   console.error(streamer.err());
 }
 ```
-
-## Publishing
-
-The package is published automatically to GitHub Packages when a `v*` tag is pushed:
-
-```bash
-npm version patch   # or minor / major
-git push --follow-tags
-```
-
-To also publish to the npm public registry, trigger the `Publish` workflow manually in GitHub Actions and enable the **Also publish to npm public registry** option (requires `NPM_TOKEN` secret).
 
 ## License
 
