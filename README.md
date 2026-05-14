@@ -406,3 +406,29 @@ if (streamer.err()) {
 ## License
 
 MIT
+
+## Release process (maintainers)
+
+Releases are cut entirely by pushing a tag — the `Publish to npm` workflow does the rest (via npm Trusted Publishing / OIDC, no token required).
+
+```bash
+# 1. Be on a clean main with green CI
+git checkout main && git pull
+
+# 2. Bump version + create matching git tag atomically
+npm version <patch|minor|major>
+#    → updates package.json's "version"
+#    → creates a `v<X.Y.Z>` git tag pointing at the bump commit
+
+# 3. Push the commit and the tag together
+git push --follow-tags
+```
+
+The workflow runs four guards before publishing — fail loudly if any of them trip:
+
+1. Triggered from a tag ref (not from a branch)
+2. Tag is valid [SemVer 2.0.0](https://semver.org/)
+3. Tag matches `package.json` version (single source of truth — never hand-edit either; always use `npm version`)
+4. That version is not already published on npm (published versions are immutable)
+
+If everything passes, the workflow runs `npm ci && npm run build && npm test`, then `npm publish --provenance --access public` using the OIDC token. The release page on npm will show a green **Provenance** badge.

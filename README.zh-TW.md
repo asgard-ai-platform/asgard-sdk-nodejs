@@ -406,3 +406,29 @@ if (streamer.err()) {
 ## 授權
 
 MIT
+
+## 發版流程（維護者）
+
+發版完全靠推 tag 觸發 — `Publish to npm` workflow 走 npm Trusted Publishing (OIDC)，不需要 token。
+
+```bash
+# 1. main 乾淨且 CI 綠燈
+git checkout main && git pull
+
+# 2. Bump 版號 + 同步建 git tag
+npm version <patch|minor|major>
+#    → 更新 package.json 的 "version"
+#    → 建立 `v<X.Y.Z>` git tag 指向這次 bump commit
+
+# 3. 一併推送 commit 與 tag
+git push --follow-tags
+```
+
+Workflow 在 publish 前會跑四個 guard，任一失敗就中止：
+
+1. 必須是 tag ref（不能從 branch 觸發）
+2. tag 是合法的 [SemVer 2.0.0](https://semver.org/)
+3. tag 與 `package.json` 版本一致（package.json 是唯一真實來源 — 兩邊都不要手改、永遠透過 `npm version`）
+4. 該版本在 npm 上尚未發佈（已發佈的版本不可變更）
+
+全部通過後，workflow 跑 `npm ci && npm run build && npm test`，再用 OIDC token `npm publish --provenance --access public`。發佈成功後 npm 頁面會出現 **Provenance** 綠勾。
