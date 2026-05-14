@@ -3,6 +3,25 @@ name: Publish to npm
 # Publishes @asgard-js/nodejs to the public npm registry using npm Trusted
 # Publishing (OIDC). The repository must be registered as a trusted publisher
 # for this package on npmjs.com before the first run — no NPM_TOKEN is used.
+#
+# ############################################################################
+# # !! DO NOT RUN THIS WORKFLOW ON A SELF-HOSTED RUNNER !!                   #
+# ############################################################################
+# #                                                                          #
+# # `runs-on:` MUST stay as a GitHub-hosted runner (e.g. `ubuntu-latest`).   #
+# #                                                                          #
+# # Why: npm Trusted Publishing verifies the OIDC token's `runner_environ-   #
+# # ment` claim and accepts ONLY `github-hosted`. Self-hosted runners emit   #
+# # `runner_environment: self-hosted`, which npm rejects — publishing will   #
+# # fail with a 4xx OIDC error.                                              #
+# #                                                                          #
+# # The security model also relies on it: self-hosted runners execute on    #
+# # infrastructure we control and can be tampered with or shared between    #
+# # workloads, so the OIDC token from a self-hosted runner can't prove the  #
+# # publish came from a trustworthy, ephemeral environment. GitHub-hosted   #
+# # runners are fresh VMs per job — the assumption npm depends on.          #
+# #                                                                          #
+# ############################################################################
 
 on:
   push:
