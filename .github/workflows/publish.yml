@@ -27,12 +27,7 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version to publish (e.g. 0.1.0). Leave empty to use package.json version.'
-        required: false
-        type: string
+  workflow_dispatch:    # Allows re-running a failed publish; the dispatched ref MUST be a v* tag.
 
 jobs:
   publish:
@@ -45,6 +40,47 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ── Guards ────────────────────────────────────────────────────────────
+      # Fail fast before installing / building if anything is inconsistent.
+      # Release flow: `npm version <patch|minor|major>` writes package.json AND
+      # creates a matching v<semver> tag atomically → `git push --follow-tags`.
+      # package.json is the single source of truth; the guards verify everything
+      # else matches it.
+      #
+      # The leading "v" on the tag is npm's `tag-version-prefix` default (what
+      # `npm version` produces) — it is NOT part of semver itself. The semver
+      # regex below validates only the stripped version portion.
+
+      - name: Guard — workflow must run against a tag ref
+        run: |
+          if [[ "$GITHUB_REF" != refs/tags/* ]]; then
+            echo "::error::This workflow must run against a tag ref. Got: $GITHUB_REF"
+            echo "::error::Release with: npm version <patch|minor|major> && git push --follow-tags"
+            exit 1
+          fi
+
+      - name: Guard — tag must be valid semver (with optional leading 'v')
+        run: |
+          TAG_VER=${GITHUB_REF_NAME#v}
+          # Official semver regex from https://semver.org/#is-there-a-suggested-regular-expression-regex-to-check-a-semver-string
+          SEMVER_RE='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(\.(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*))?(\+([0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*))?$'
+          if ! [[ "$TAG_VER" =~ $SEMVER_RE ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME is not valid semver (expected v<MAJOR>.<MINOR>.<PATCH>[-pre][+build])."
+            exit 1
+          fi
+          echo "✓ tag $GITHUB_REF_NAME is valid semver"
+
+      - name: Guard — tag must match package.json version
+        run: |
+          PKG_VER=$(node -p "require('./package.json').version")
+          TAG_VER=${GITHUB_REF_NAME#v}
+          if [[ "$PKG_VER" != "$TAG_VER" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $PKG_VER."
+            echo "::error::Use 'npm version <bump>' which writes both atomically — do not hand-edit either."
+            exit 1
+          fi
+          echo "✓ package.json version = tag = $PKG_VER"
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -55,6 +91,18 @@ jobs:
       - name: Upgrade npm (Trusted Publishing requires >= 11.5.1)
         run: npm install -g npm@latest
 
+      - name: Guard — version not already published on npm (collision check)
+        run: |
+          VER=$(node -p "require('./package.json').version")
+          if npm view "@asgard-js/nodejs@$VER" version >/dev/null 2>&1; then
+            echo "::error::@asgard-js/nodejs@$VER is already published on npm."
+            echo "::error::Published versions are immutable. Bump with: npm version <patch|minor|major>"
+            exit 1
+          fi
+          echo "✓ @asgard-js/nodejs@$VER is not yet on npm"
+
+      # ── Build / test / publish ────────────────────────────────────────────
+
       - name: Install dependencies
         run: npm ci
 
@@ -63,14 +111,6 @@ jobs:
 
       - name: Test
         run: npm test
-
-      - name: Set release version
-        run: |
-          if [[ "${{ github.event_name }}" == "push" ]]; then
-            npm version ${GITHUB_REF_NAME#v} --no-git-tag-version
-          elif [[ -n "${{ inputs.version }}" ]]; then
-            npm version ${{ inputs.version }} --no-git-tag-version
-          fi
 
       - name: Publish to npm (public, with provenance)
         run: npm publish --provenance --access public
