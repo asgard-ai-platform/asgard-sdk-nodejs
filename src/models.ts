@@ -34,7 +34,8 @@ export type MessageTemplateType =
   | 'BUTTON'
   | 'CAROUSEL'
   | 'CHART'
-  | 'TABLE';
+  | 'TABLE'
+  | 'ATTACHMENT';
 
 export type MessageTemplateActionType = 'MESSAGE' | 'URI' | 'EMIT';
 
@@ -85,6 +86,7 @@ export const MessageTemplateTypeButton: MessageTemplateType = 'BUTTON';
 export const MessageTemplateTypeCarousel: MessageTemplateType = 'CAROUSEL';
 export const MessageTemplateTypeChart: MessageTemplateType = 'CHART';
 export const MessageTemplateTypeTable: MessageTemplateType = 'TABLE';
+export const MessageTemplateTypeAttachment: MessageTemplateType = 'ATTACHMENT';
 
 export const MessageTemplateActionTypeMessage: MessageTemplateActionType = 'MESSAGE';
 export const MessageTemplateActionTypeUri: MessageTemplateActionType = 'URI';
@@ -177,6 +179,18 @@ export interface MessageTemplateReference {
   uri: string;
 }
 
+/**
+ * A single attachment chip in an ATTACHMENT template.
+ * defaultAction fires when the chip body is tapped; downloadAction, when set,
+ * renders an additional download button on the right.
+ */
+export interface MessageTemplateAttachment {
+  title: string;
+  text: string;
+  defaultAction: MessageTemplateAction;
+  downloadAction?: MessageTemplateAction;
+}
+
 export interface MessageTemplate {
   type: MessageTemplateType;
   text?: string;
@@ -199,6 +213,7 @@ export interface MessageTemplate {
   defaultChart?: string;
   table?: MessageTemplateTable;
   references?: MessageTemplateReference[];
+  attachments?: MessageTemplateAttachment[];
   /** @deprecated */
   description?: string;
 }

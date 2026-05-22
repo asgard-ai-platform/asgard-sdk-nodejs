@@ -63,7 +63,7 @@ describe('Enum string values (must match Go sdk json tags)', () => {
     expect(values).toHaveLength(3);
   });
 
-  it('MessageTemplateType — 9 values', () => {
+  it('MessageTemplateType — 10 values', () => {
     const values: MessageTemplateType[] = [
       'TEXT',
       'IMAGE',
@@ -74,8 +74,9 @@ describe('Enum string values (must match Go sdk json tags)', () => {
       'CAROUSEL',
       'CHART',
       'TABLE',
+      'ATTACHMENT',
     ];
-    expect(values).toHaveLength(9);
+    expect(values).toHaveLength(10);
   });
 
   it('MessageTemplateActionType — 3 values', () => {
@@ -172,5 +173,87 @@ describe('JSON key names (must match Go json tags)', () => {
     expect(parsed.channelId).toBe('ch1');
     expect(parsed.blobId).toBe('b1');
     expect(parsed.fileType).toBe('IMAGE');
+  });
+});
+
+// ─── MessageTemplateAttachment (v1.5.2) ─────────────────────────────────────
+
+import { MessageTemplateAttachment, MessageTemplateTypeAttachment } from '../src/models.js';
+import { AsgardError, isBadRequest, isUnauthorized, isForbidden, isNotFound, isConflict, isPreconditionFailed, statusCodeOf } from '../src/error.js';
+
+describe('MessageTemplateAttachment', () => {
+  it('MessageTemplateTypeAttachment constant equals ATTACHMENT', () => {
+    expect(MessageTemplateTypeAttachment).toBe('ATTACHMENT');
+  });
+
+  it('attachment wire format has expected keys', () => {
+    const attachment: MessageTemplateAttachment = {
+      title: 'Report Q1',
+      text: '2026 report',
+      defaultAction: { type: 'URI', text: null, uri: 'https://example.com', payload: null },
+    };
+    const raw = JSON.stringify(attachment);
+    const parsed = JSON.parse(raw);
+    expect(parsed.title).toBe('Report Q1');
+    expect(parsed.text).toBe('2026 report');
+    expect(parsed.defaultAction.uri).toBe('https://example.com');
+    expect(parsed.downloadAction).toBeUndefined();
+  });
+
+  it('downloadAction is included when set', () => {
+    const attachment: MessageTemplateAttachment = {
+      title: 'File',
+      text: 'desc',
+      defaultAction: { type: 'URI', text: null, uri: 'https://view', payload: null },
+      downloadAction: { type: 'URI', text: null, uri: 'https://download', payload: null },
+    };
+    const raw = JSON.stringify(attachment);
+    const parsed = JSON.parse(raw);
+    expect(parsed.downloadAction.uri).toBe('https://download');
+  });
+});
+
+// ─── AsgardError predicate helpers (v1.5.3) ─────────────────────────────────
+
+describe('AsgardError predicate helpers', () => {
+  it('isBadRequest returns true for 400', () => {
+    expect(isBadRequest(new AsgardError('bad', 400))).toBe(true);
+  });
+  it('isBadRequest returns false for 401', () => {
+    expect(isBadRequest(new AsgardError('unauth', 401))).toBe(false);
+  });
+  it('isUnauthorized returns true for 401', () => {
+    expect(isUnauthorized(new AsgardError('x', 401))).toBe(true);
+  });
+  it('isForbidden returns true for 403', () => {
+    expect(isForbidden(new AsgardError('x', 403))).toBe(true);
+  });
+  it('isNotFound returns true for 404', () => {
+    expect(isNotFound(new AsgardError('x', 404))).toBe(true);
+  });
+  it('isConflict returns true for 409', () => {
+    expect(isConflict(new AsgardError('x', 409))).toBe(true);
+  });
+  it('isPreconditionFailed returns true for 412', () => {
+    expect(isPreconditionFailed(new AsgardError('x', 412, 'FAILED_PRECONDITION'))).toBe(true);
+  });
+  it('isPreconditionFailed returns false for 400', () => {
+    expect(isPreconditionFailed(new AsgardError('x', 400))).toBe(false);
+  });
+  it('statusCodeOf returns the statusCode', () => {
+    expect(statusCodeOf(new AsgardError('x', 412))).toBe(412);
+  });
+  it('statusCodeOf returns 0 for non-AsgardError', () => {
+    expect(statusCodeOf(new Error('plain'))).toBe(0);
+    expect(statusCodeOf(null)).toBe(0);
+  });
+  it('all helpers return false for non-AsgardError', () => {
+    const err = new Error('plain');
+    expect(isBadRequest(err)).toBe(false);
+    expect(isUnauthorized(err)).toBe(false);
+    expect(isForbidden(err)).toBe(false);
+    expect(isNotFound(err)).toBe(false);
+    expect(isConflict(err)).toBe(false);
+    expect(isPreconditionFailed(err)).toBe(false);
   });
 });

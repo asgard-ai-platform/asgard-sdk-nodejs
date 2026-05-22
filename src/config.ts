@@ -15,4 +15,11 @@ export interface MessageRequestOptions {
   isDebug?: boolean;
   /** Forwarded as X-ASGARD-USER-IDENTITY-HINT header (max 128 chars) */
   userIdentityHint?: string;
+  /**
+   * When true, treats every tool call in this single request as already consented.
+   * The server skips the consent gate (no asgard.tool_call.consent event, no pause)
+   * for this run only — the persistent tool_call_allow_list is not modified.
+   * Only honored by the SSE endpoint (newStreamer); sendMessage ignores it server-side.
+   */
+  bypassToolCallConsent?: boolean;
 }
