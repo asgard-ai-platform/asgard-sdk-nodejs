@@ -16,6 +16,9 @@ import {
   SseEventTypeSandboxReady,
   ToolCallConsentResult,
   ToolCallConsentResultAllowAlways,
+  ToolCall,
+  PendingToolCall,
+  MessageTemplateTable,
 } from '../src/models.js';
 
 describe('Enum string values (must match Go sdk json tags)', () => {
@@ -172,5 +175,80 @@ describe('JSON key names (must match Go json tags)', () => {
     expect(parsed.channelId).toBe('ch1');
     expect(parsed.blobId).toBe('b1');
     expect(parsed.fileType).toBe('IMAGE');
+  });
+});
+
+describe('v1.5.4 — ToolCall.reason / PendingToolCall.reason', () => {
+  it('ToolCall includes reason field', () => {
+    const tc: ToolCall = {
+      toolsetName: 'builtin',
+      toolName: 'search',
+      parameter: { q: 'test' },
+      reason: 'User asked for weather data',
+    };
+    const json = JSON.parse(JSON.stringify(tc));
+    expect(json.reason).toBe('User asked for weather data');
+  });
+
+  it('ToolCall reason is optional', () => {
+    const tc: ToolCall = {
+      toolsetName: 'x',
+      toolName: 'y',
+      parameter: null,
+    };
+    const json = JSON.parse(JSON.stringify(tc));
+    expect(json.reason).toBeUndefined();
+  });
+
+  it('PendingToolCall includes reason field', () => {
+    const ptc: PendingToolCall = {
+      toolCallId: 'tc-1',
+      toolsetName: '',
+      toolName: 'exec',
+      parameter: {},
+      reason: 'Need to run calculation',
+      alreadyAllowed: false,
+    };
+    const json = JSON.parse(JSON.stringify(ptc));
+    expect(json.reason).toBe('Need to run calculation');
+    expect(json.alreadyAllowed).toBe(false);
+  });
+
+  it('PendingToolCall reason is optional', () => {
+    const ptc: PendingToolCall = {
+      toolCallId: 'tc-2',
+      toolsetName: '',
+      toolName: 'z',
+      parameter: null,
+      alreadyAllowed: true,
+    };
+    const json = JSON.parse(JSON.stringify(ptc));
+    expect(json.reason).toBeUndefined();
+  });
+});
+
+describe('v1.5.5 — MessageTemplateTable.sql / sqlExplanation', () => {
+  it('MessageTemplateTable includes sql and sqlExplanation', () => {
+    const table: MessageTemplateTable = {
+      rowType: 'OBJECT',
+      columns: [{ header: 'Name', key: 'name' }],
+      data: [{ name: 'Alice' }],
+      sql: "SELECT * FROM users WHERE active = true",
+      sqlExplanation: '查詢所有活躍用戶',
+    };
+    const json = JSON.parse(JSON.stringify(table));
+    expect(json.sql).toBe("SELECT * FROM users WHERE active = true");
+    expect(json.sqlExplanation).toBe('查詢所有活躍用戶');
+  });
+
+  it('MessageTemplateTable sql fields are optional', () => {
+    const table: MessageTemplateTable = {
+      rowType: 'OBJECT',
+      columns: [],
+      data: [],
+    };
+    const json = JSON.parse(JSON.stringify(table));
+    expect(json.sql).toBeUndefined();
+    expect(json.sqlExplanation).toBeUndefined();
   });
 });
