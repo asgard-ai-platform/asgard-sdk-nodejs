@@ -1,6 +1,6 @@
 {
   "name": "@asgard-js/nodejs",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Node.js / TypeScript SDK for the Asgard Edge Server BotProvider and SourceSet APIs.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
