@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`MessageRequestOptions.bypassToolCallConsent`** — When `true`, the SSE endpoint (`newStreamer`) auto-approves every tool call in the request without modifying the persistent `tool_call_allow_list`. Mirrors `asgard-sdk-go` v1.5.1. The REST endpoint (`sendMessage`) will ignore it server-side.
+
+- **`MessageTemplateTypeAttachment`** constant (`'ATTACHMENT'`) and the `'ATTACHMENT'` member of the `MessageTemplateType` union type — new template type for rendering a list of attachment chips. Mirrors `asgard-sdk-go` v1.5.2.
+
+- **`MessageTemplateAttachment`** interface — Attachment chip with `title`, `text`, `defaultAction` (required) and `downloadAction` (optional). Mirrors `asgard-sdk-go` v1.5.2.
+
+- **`attachments?: MessageTemplateAttachment[]`** field on `MessageTemplate`. Mirrors `asgard-sdk-go` v1.5.2.
+
+- **Error predicate helpers** — `isBadRequest`, `isUnauthorized`, `isForbidden`, `isNotFound`, `isConflict`, `isPreconditionFailed`, and `statusCodeOf(err)`. All exported from the package root. Mirrors Go's `client.Is<Status>` and `client.StatusCode` functions from `asgard-sdk-go` v1.5.3.
+
+### Fixed
+
+- **`newStreamer` query params** — `buildUrl` now correctly appends both `is_debug=true` and `bypass_tool_call_consent=true` (previously only supported a single `is_debug` param; multiple params now use `URLSearchParams`).
+
 ## [0.1.0] - 2026-05-14
 
 Initial public release. Mirrors `asgard-sdk-go` v1.5.0.

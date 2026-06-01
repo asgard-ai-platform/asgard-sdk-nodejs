@@ -81,6 +81,16 @@ describe('BotProviderClient', () => {
       expect(url).toContain('?is_debug=true');
     });
 
+    it('does NOT append bypass_tool_call_consent even when bypassToolCallConsent is true', async () => {
+      // bypassToolCallConsent is SSE-only — sendMessage must not forward this param
+      fetchSpy.mockResolvedValue(jsonResponse(testReply));
+
+      await client.sendMessage(testMessage, { bypassToolCallConsent: true });
+
+      const [url] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      expect(url).not.toContain('bypass_tool_call_consent');
+    });
+
     it('sets X-ASGARD-USER-IDENTITY-HINT when provided', async () => {
       fetchSpy.mockResolvedValue(jsonResponse(testReply));
 
@@ -208,6 +218,37 @@ describe('BotProviderClient', () => {
       } catch (err) {
         expect((err as AsgardError).statusCode).toBe(404);
       }
+    });
+
+    it('appends ?is_debug=true when isDebug is true', async () => {
+      const body = new ReadableStream<Uint8Array>({ start(c) { c.close(); } });
+      fetchSpy.mockResolvedValue(new Response(body, { status: 200 }));
+
+      await client.newStreamer(testMessage, { isDebug: true });
+
+      const [url] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      expect(url).toContain('is_debug=true');
+    });
+
+    it('appends ?bypass_tool_call_consent=true when bypassToolCallConsent is true', async () => {
+      const body = new ReadableStream<Uint8Array>({ start(c) { c.close(); } });
+      fetchSpy.mockResolvedValue(new Response(body, { status: 200 }));
+
+      await client.newStreamer(testMessage, { bypassToolCallConsent: true });
+
+      const [url] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      expect(url).toContain('bypass_tool_call_consent=true');
+    });
+
+    it('appends both is_debug and bypass_tool_call_consent when both are true', async () => {
+      const body = new ReadableStream<Uint8Array>({ start(c) { c.close(); } });
+      fetchSpy.mockResolvedValue(new Response(body, { status: 200 }));
+
+      await client.newStreamer(testMessage, { isDebug: true, bypassToolCallConsent: true });
+
+      const [url] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      expect(url).toContain('is_debug=true');
+      expect(url).toContain('bypass_tool_call_consent=true');
     });
   });
 

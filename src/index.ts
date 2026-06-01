@@ -2,7 +2,16 @@
 
 // Config & Error
 export { BotProviderConfig, MessageRequestOptions } from './config.js';
-export { AsgardError } from './error.js';
+export {
+  AsgardError,
+  statusCodeOf,
+  isBadRequest,
+  isUnauthorized,
+  isForbidden,
+  isNotFound,
+  isConflict,
+  isPreconditionFailed,
+} from './error.js';
 
 // Clients
 export { BotProviderClient } from './client.js';

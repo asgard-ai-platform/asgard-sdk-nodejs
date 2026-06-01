@@ -21,10 +21,15 @@ function buildUrl(
   base: string,
   path: string,
   opts?: MessageRequestOptions,
+  sseOnly = false,
 ): string {
   const url = `${base}${path}`;
-  if (opts?.isDebug) return `${url}?is_debug=true`;
-  return url;
+  const qs = new URLSearchParams();
+  if (opts?.isDebug) qs.set('is_debug', 'true');
+  // bypassToolCallConsent is honored by the SSE endpoint only (mirrors Go streamer.go)
+  if (sseOnly && opts?.bypassToolCallConsent) qs.set('bypass_tool_call_consent', 'true');
+  const q = qs.toString();
+  return q ? `${url}?${q}` : url;
 }
 
 function buildHeaders(
@@ -91,6 +96,7 @@ export class BotProviderClient {
       this.config.edgeServerHost,
       `${this.basePath()}/message/sse`,
       opts,
+      true, // SSE-only: include bypass_tool_call_consent if set
     );
     const resp = await fetch(url, {
       method: 'POST',
