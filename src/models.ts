@@ -172,6 +172,8 @@ export interface MessageTemplateTable {
   columns: MessageTemplateTableColumn[];
   pagination?: MessageTemplateTablePagination;
   data: unknown[];
+  sql?: string;
+  sqlExplanation?: string;
 }
 
 export interface MessageTemplateReference {
@@ -225,6 +227,7 @@ export interface PendingToolCall {
   toolsetName: string;
   toolName: string;
   parameter: unknown;
+  reason?: string;
   alreadyAllowed: boolean;
 }
 
@@ -285,6 +288,7 @@ export interface ToolCall {
   toolsetName: string;
   toolName: string;
   parameter: unknown;
+  reason?: string;
 }
 
 export interface GenericBotSseEventFactRunInit {}
