@@ -5,9 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.3] - 2026-06-01
 
 ### Added
+
+- **`ToolCall.reason`** and **`PendingToolCall.reason`** (optional `string`) — the model's stated reason for invoking a tool. Mirrors `asgard-sdk-go` v1.5.4.
+
+- **`MessageTemplateTable.sql`** and **`MessageTemplateTable.sqlExplanation`** (optional `string`) — the SQL query backing a table template and a human-readable explanation of it. Mirrors `asgard-sdk-go` v1.5.5.
 
 - **`MessageRequestOptions.bypassToolCallConsent`** — When `true`, the SSE endpoint (`newStreamer`) auto-approves every tool call in the request without modifying the persistent `tool_call_allow_list`. Mirrors `asgard-sdk-go` v1.5.1. The REST endpoint (`sendMessage`) will ignore it server-side.
 
@@ -47,5 +51,6 @@ Initial public release. Mirrors `asgard-sdk-go` v1.5.0.
 
 - `BotAgent` / `FunctionAgent` interfaces and the `newBotAgent` / `newBotAgentWithConfig` / `newFunctionAgent` / `newFunctionAgentWithConfig` factories. Use `BotProviderClient` directly — it now covers every endpoint these agents wrapped.
 
-[Unreleased]: https://github.com/asgard-ai-platform/asgard-sdk-nodejs/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/asgard-ai-platform/asgard-sdk-nodejs/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/asgard-ai-platform/asgard-sdk-nodejs/compare/v0.1.0...v0.1.3
 [0.1.0]: https://github.com/asgard-ai-platform/asgard-sdk-nodejs/releases/tag/v0.1.0
